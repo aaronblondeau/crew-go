@@ -6,6 +6,17 @@ import (
 	"time"
 )
 
+type TaskTestClient struct{}
+
+func (client TaskTestClient) Post(URL string, input interface{}) (output interface{}, children []*Task, err error) {
+	output = map[string]interface{}{
+		"demo": "Test Complete",
+	}
+	children = make([]*Task, 0)
+	err = nil
+	return
+}
+
 func TestCanExecute(t *testing.T) {
 	task := Task{
 		Id:                "T1",
@@ -118,7 +129,7 @@ func TestCannotExecuteIfParentsIncomplete(t *testing.T) {
 	channels := make(map[string]Channel)
 	channels[testChannel.Id] = testChannel
 
-	group.Prepare([]*Task{&parent, &task}, channels)
+	group.Prepare([]*Task{&parent, &task}, channels, &TaskTestClient{})
 
 	canExecute := task.CanExecute(&group)
 	if canExecute {
@@ -151,7 +162,7 @@ func TestCanUpdateTask(t *testing.T) {
 		TaskUpdates:   make(chan TaskUpdateEvent, 8),
 	}
 
-	group.Prepare([]*Task{&task}, make(map[string]Channel))
+	group.Prepare([]*Task{&task}, make(map[string]Channel), &TaskTestClient{})
 	group.Operate()
 
 	// This test needs to wait for a TaskUpdate event to know when the task has been updated
@@ -162,7 +173,7 @@ func TestCanUpdateTask(t *testing.T) {
 		wg.Done()
 	}()
 
-	group.TaskOperators[task.Id].Updates <- map[string]interface{}{
+	group.TaskOperators[task.Id].ExternalUpdates <- map[string]interface{}{
 		"name": "New Name",
 	}
 	wg.Wait()

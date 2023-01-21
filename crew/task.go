@@ -5,6 +5,10 @@ import (
 	"time"
 )
 
+type TaskClient interface {
+	Post(URL string, input interface{}) (output interface{}, children []*Task, err error) // output, children, error
+}
+
 // A Task represents a unit of work that can be completed by a worker.
 type Task struct {
 	Id                  string        `json:"id"`
@@ -37,31 +41,27 @@ type Task struct {
 type TaskOperator struct {
 	Task                 *Task
 	TaskGroup            *TaskGroup
-	Channels             map[string]Channel
-	Updates              chan map[string]interface{}
+	ExternalUpdates      chan map[string]interface{}
 	ExecuteTimer         *time.Timer
 	Shutdown             chan bool
 	ParentCompleteEvents chan *Task
 	Operating            bool
 	Executing            chan bool
-	Complete             chan interface{} // emit output
-	Error                chan interface{} // emit error
 	Terminated           chan bool
+	Client               TaskClient
 }
 
-func NewTaskOperator(task *Task, taskGroup *TaskGroup, channels map[string]Channel) *TaskOperator {
+func NewTaskOperator(task *Task, taskGroup *TaskGroup, channels map[string]Channel, client TaskClient) *TaskOperator {
 	t := TaskOperator{
 		Task:                 task,
 		TaskGroup:            taskGroup,
-		Channels:             channels,
-		Updates:              make(chan map[string]interface{}, 8),
+		ExternalUpdates:      make(chan map[string]interface{}, 8),
 		ExecuteTimer:         time.NewTimer(time.Second * -1),
 		Shutdown:             make(chan bool),
 		ParentCompleteEvents: make(chan *Task, len(task.Children)),
 		Executing:            make(chan bool),
-		Complete:             make(chan interface{}),
-		Error:                make(chan interface{}),
 		Terminated:           make(chan bool),
+		Client:               client,
 	}
 	// Don't let initial timer run
 	t.CancelExecute()
@@ -90,7 +90,7 @@ func (operator *TaskOperator) Operate() {
 			case <-operator.ExecuteTimer.C:
 				operator.Execute()
 
-			case update := <-operator.Updates:
+			case update := <-operator.ExternalUpdates:
 				newName, hasNewName := update["name"].(string)
 				if hasNewName {
 					operator.Task.Name = newName
@@ -102,7 +102,7 @@ func (operator *TaskOperator) Operate() {
 				}
 
 				// TODO - persist the change
-				// TOOD - handle additional fields
+				// TODO - handle additional fields
 
 				select {
 				case operator.TaskGroup.TaskUpdates <- TaskUpdateEvent{
@@ -153,13 +153,8 @@ func (operator *TaskOperator) Evaluate() {
 	// - One of task's parents have completed
 	// ...
 
-	// TODO - check if task is ready to execute:
-	// IsComplete = false
-	// All parents IsComplete = true
-	// runAfter passed
-	// RemainingAttempts >0
-	// etc...
-	taskCanExecute := !operator.Task.CanExecute(operator.TaskGroup)
+	// Check if task is ready to execute:
+	taskCanExecute := operator.Task.CanExecute(operator.TaskGroup)
 
 	// If task is good to go, create an execution timer (if one doesn't exist already)
 	if taskCanExecute {
@@ -213,23 +208,100 @@ func (operator *TaskOperator) Execute() {
 		default:
 		}
 
-		channel := operator.Channels[operator.Task.Channel]
-		fmt.Println("Timer fired!  Would make http call!", channel.Url)
-		// Pretend sleep for http call
-		time.Sleep(2 * time.Second)
-		fmt.Println("Would finish http call!")
+		channel := operator.TaskGroup.Channels[operator.Task.Channel]
+		fmt.Println("Timer fired!  Sending to client:", channel.Url)
 
-		// TODO - create child tasks
-		// TODO - capture errors
-		// TODO - capture output
-		// TODO - complete all other tasks with matching key
+		output, children, err := operator.Client.Post(channel.Url, operator.Task.Input)
 
-		// When a task is completed, find all children and send their operator an ParentCompleteEvents
-		for _, child := range operator.Task.Children {
-			operator.TaskGroup.TaskOperators[child.Id].ParentCompleteEvents <- operator.Task
+		// decrement attempts
+		operator.Task.RemainingAttempts--
+
+		// capture output
+		operator.Task.Output = output
+
+		if err != nil {
+			// Capture Error
+			operator.Task.Errors = append(operator.Task.Errors, err)
+		} else {
+			childrenOk := true
+			// Create child tasks
+			if len(children) > 0 {
+				// Children have to be created in order so that parents exist before children exist
+				// TaskGroup's AddTask throws an error if a task's parents aren't found
+				// We can use that here by iteratively trying to create children till they're all done
+				// If we get stuck then something is wrong with structure of children and we should record an error
+				createdChildren := 0
+				lastCreatedChildren := 0
+				expectedChildren := len(children)
+				for createdChildren < expectedChildren {
+					for _, child := range children {
+						// If worker didn't specify that current task is parent of the children, add current task as a parent
+						currentTaskIsParent := false
+						for _, parentId := range child.ParentIds {
+							if parentId == operator.Task.Id {
+								currentTaskIsParent = true
+							}
+						}
+						if !currentTaskIsParent {
+							child.ParentIds = append(child.ParentIds, operator.Task.Id)
+						}
+
+						// Add task will error if child exists or parents are missing
+						// Add task also emits TaskUpdates for us
+						err := operator.TaskGroup.AddTask(child, operator.Client)
+						if err == nil {
+							createdChildren++
+						}
+					}
+					// If number of createdChildren didn't change on a pass then we have a corrupt parent/child structure in children
+					if createdChildren != lastCreatedChildren {
+						// Un-create children from above so we don't leave a half baked structure
+						for _, child := range children {
+							operator.TaskGroup.DeleteTask(child.Id)
+						}
+						childrenOk = false
+						break
+					}
+					lastCreatedChildren = createdChildren
+				}
+			}
+
+			if childrenOk {
+				operator.Task.IsComplete = true
+				// Complete all other tasks with matching key
+				if operator.Task.Key != "" {
+					for _, keySiblingOperator := range operator.TaskGroup.TaskOperators {
+						if keySiblingOperator.Task.Key == operator.Task.Key {
+							keySiblingOperator.Task.IsComplete = true
+							keySiblingOperator.Task.Output = output
+
+							// TODO - persist keySiblingOperator.Task
+
+							select {
+							case operator.TaskGroup.TaskUpdates <- TaskUpdateEvent{
+								Event: "update",
+								Task:  *keySiblingOperator.Task,
+							}:
+							default:
+							}
+						}
+					}
+				}
+
+				// When a task is completed, find all children and send their operator an ParentCompleteEvents
+				for _, child := range operator.Task.Children {
+					operator.TaskGroup.TaskOperators[child.Id].ParentCompleteEvents <- operator.Task
+				}
+			} else {
+				// Children not ok
+				operator.Task.IsComplete = false
+				operator.Task.Errors = append(operator.Task.Errors, "Unable to create children - corrupt parent/child relationship.")
+			}
 		}
+
 		operator.Task.BusyExecuting = false
 
+		// TODO - persist task
 		select {
 		case operator.TaskGroup.TaskUpdates <- TaskUpdateEvent{
 			Event: "update",
@@ -244,17 +316,6 @@ func (operator *TaskOperator) Execute() {
 		default:
 			fmt.Println("no executing event sent")
 		}
-
-		// Emit on complete (or error) last. Automated tests watch these channel to know when execute process has finished.
-		select {
-		case operator.Complete <- "Task output goes here...":
-			fmt.Println("sent complete event")
-		default:
-			fmt.Println("no complete event sent")
-		}
-
-		// TODO
-		// operator.Error <-
 	}
 }
 

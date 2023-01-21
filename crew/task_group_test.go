@@ -5,6 +5,17 @@ import (
 	"time"
 )
 
+type TaskGroupTestClient struct{}
+
+func (client TaskGroupTestClient) Post(URL string, input interface{}) (output interface{}, children []*Task, err error) {
+	output = map[string]interface{}{
+		"demo": "Test Complete",
+	}
+	children = make([]*Task, 0)
+	err = nil
+	return
+}
+
 func TestPrepareInflatesChildren(t *testing.T) {
 	parent := Task{
 		Id:                "T1",
@@ -51,7 +62,7 @@ func TestPrepareInflatesChildren(t *testing.T) {
 	channels := make(map[string]Channel)
 	channels[testChannel.Id] = testChannel
 
-	group.Prepare([]*Task{&parent, &task}, channels)
+	group.Prepare([]*Task{&parent, &task}, channels, &TaskGroupTestClient{})
 
 	if parent.Children[0] != &task {
 		t.Fatal("Parent task's Children slice was not inflated!")

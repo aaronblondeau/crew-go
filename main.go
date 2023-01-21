@@ -8,6 +8,21 @@ import (
 	"github.com/crew-go/crew"
 )
 
+type DemoClient struct{}
+
+func (client DemoClient) Post(URL string, input interface{}) (output interface{}, children []*crew.Task, err error) {
+	// Pretend sleep for http call
+	fmt.Println("I'm about to send it!")
+	time.Sleep(2 * time.Second)
+	fmt.Println("Yeah, sure I sent that http call...")
+	output = map[string]interface{}{
+		"demo": "Demo Complete",
+	}
+	children = make([]*crew.Task, 0)
+	err = nil
+	return
+}
+
 func main() {
 	devChannel := crew.Channel{
 		Id:  "worker-a",
@@ -42,7 +57,7 @@ func main() {
 		IsPaused:            false,
 		IsComplete:          false,
 		Priority:            1,
-		RunAfter:            time.Now().Add(10 * time.Second),
+		RunAfter:            time.Now().Add(5 * time.Second),
 		ProgressWeight:      1,
 		IsSeed:              false,
 		ErrorDelayInSeconds: 5,
@@ -61,9 +76,10 @@ func main() {
 	}
 	taskGroupTasks[task.TaskGroupId] = append(taskGroupTasks[task.TaskGroupId], &task)
 
+	client := DemoClient{}
 	// Prepare each task group (creates operator for each task)
 	for _, taskGroup := range taskGroups {
-		taskGroup.Prepare(taskGroupTasks[taskGroup.Id], channels)
+		taskGroup.Prepare(taskGroupTasks[taskGroup.Id], channels, &client)
 	}
 
 	// Some debug code...
@@ -75,16 +91,9 @@ func main() {
 	// }
 
 	// To delete a task:
-	// TODO ???
-	// TODO - make sure children get recursively deleted (but only if they don't have any other parents!)
+	// taskGroups[group.id].DeleteTask(taskIdToDelete)
 
-	// To emit SSE events from task to subscribers
-	go func() {
-		event := <-group.TaskUpdates
-		fmt.Println("Would emit an SSE event on group (" + group.Id + ") " + event.Event)
-	}()
-
-	// TODO, When service is terminating, do this for every task
+	// TODO, When Go service is terminating, do this for every task
 	// operatorPtr.Shutdown <- true
 
 	var wg sync.WaitGroup
@@ -92,18 +101,28 @@ func main() {
 	fmt.Println("About to wait for stuff to happen")
 	wg.Add(1)
 	go func() {
-		fmt.Println("Waiting for stuff to happen")
 		timeout := time.NewTimer(20 * time.Second)
-		// Wait for a complete/error event (or timeout the test)
-		select {
-		case output := <-taskGroups[group.Id].TaskOperators[task.Id].Complete:
-			fmt.Println("Completed", output)
-		case error := <-taskGroups[group.Id].TaskOperators[task.Id].Error:
-			fmt.Println("Error", error)
-		case <-timeout.C:
-			fmt.Println("Timed out!")
+		for {
+			fmt.Println("Waiting for stuff to happen")
+			// Wait for a complete/error event (or timeout the test)
+			select {
+			case event := <-group.TaskUpdates:
+				fmt.Println("Got an update!", event.Event, event.Task.IsComplete)
+				if event.Task.IsComplete {
+					wg.Done()
+					return
+				}
+				// TODO - emit SSE event for each update
+			case <-timeout.C:
+				fmt.Println("Timed out!")
+				for _, op := range group.TaskOperators {
+					op.Shutdown <- true
+				}
+				wg.Done()
+				return
+			}
+			fmt.Println("Something happened...")
 		}
-		wg.Done()
 	}()
 
 	// Call operate on every operator!
