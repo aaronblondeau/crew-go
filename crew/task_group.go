@@ -120,7 +120,11 @@ func (taskGroup TaskGroup) DeleteTask(id string) error {
 	}
 
 	// Stop the task's operator
-	operator.Shutdown <- true
+	select {
+	case operator.Shutdown <- true:
+	default:
+		// Ignore no shutdown listener...
+	}
 
 	// If task has parents, remove from parents' Children array
 	if len(operator.Task.ParentIds) > 0 {

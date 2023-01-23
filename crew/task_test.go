@@ -8,7 +8,7 @@ import (
 
 type TaskTestClient struct{}
 
-func (client TaskTestClient) Post(URL string, input interface{}) (output interface{}, children []*Task, err error) {
+func (client TaskTestClient) Post(URL string, task *Task) (output interface{}, children []*Task, err error) {
 	output = map[string]interface{}{
 		"demo": "Test Complete",
 	}

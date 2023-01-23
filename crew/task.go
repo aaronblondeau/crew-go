@@ -6,7 +6,7 @@ import (
 )
 
 type TaskClient interface {
-	Post(URL string, input interface{}) (output interface{}, children []*Task, err error) // output, children, error
+	Post(URL string, task *Task) (output interface{}, children []*Task, err error) // output, children, error
 }
 
 // A Task represents a unit of work that can be completed by a worker.
@@ -182,7 +182,10 @@ func (operator *TaskOperator) Evaluate() {
 func (operator *TaskOperator) CancelExecute() {
 	// Stop and drain timer
 	if !operator.ExecuteTimer.Stop() {
-		<-operator.ExecuteTimer.C
+		select {
+		case <-operator.ExecuteTimer.C:
+		default:
+		}
 	}
 }
 
@@ -211,7 +214,7 @@ func (operator *TaskOperator) Execute() {
 		channel := operator.TaskGroup.Channels[operator.Task.Channel]
 		fmt.Println("Timer fired!  Sending to client:", channel.Url)
 
-		output, children, err := operator.Client.Post(channel.Url, operator.Task.Input)
+		output, children, err := operator.Client.Post(channel.Url, operator.Task)
 
 		// decrement attempts
 		operator.Task.RemainingAttempts--

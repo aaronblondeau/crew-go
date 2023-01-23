@@ -10,7 +10,7 @@ import (
 
 type DemoClient struct{}
 
-func (client DemoClient) Post(URL string, input interface{}) (output interface{}, children []*crew.Task, err error) {
+func (client DemoClient) Post(URL string, task *crew.Task) (output interface{}, children []*crew.Task, err error) {
 	// Pretend sleep for http call
 	fmt.Println("I'm about to send it!")
 	time.Sleep(2 * time.Second)

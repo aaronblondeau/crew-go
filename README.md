@@ -7,11 +7,9 @@ Note, use this to exclude from JSON `json:"-"` : https://pkg.go.dev/encoding/jso
 cd models
 go test
 
-TODO : Tests for task delete
-TODO : Tesks for task add
 TODO : Tests with TaskClient
 
-TODO : cleanup "cron" for removing old tasks
+TODO : cleanup "cron" for removing old taskgroups
 
 
 
