@@ -148,7 +148,7 @@ func (operator *TaskOperator) Operate() {
 			}
 		}
 	}()
-	operator.Evaluate()
+	// operator.Evaluate()
 }
 
 // Evaluate determines if a Task is eligible to be executed and begins
@@ -283,13 +283,16 @@ func (operator *TaskOperator) Execute() {
 							createdChildren++
 						}
 					}
-					// If number of createdChildren didn't change on a pass then we have a corrupt parent/child structure in children
+					// If number of createdChildren didn't change on a pass (and we're not done) then we have a corrupt parent/child structure in children
 					if createdChildren != lastCreatedChildren {
-						// Un-create children from above so we don't leave a half baked structure
-						for _, child := range children {
-							operator.TaskGroup.DeleteTask(child.Id)
+						if createdChildren < len(children) {
+							// Something went wrong creating the children
+							// Un-create children from above so we don't leave a half baked structure
+							for _, child := range children {
+								operator.TaskGroup.DeleteTask(child.Id)
+							}
+							childrenOk = false
 						}
-						childrenOk = false
 						break
 					}
 					lastCreatedChildren = createdChildren
@@ -301,7 +304,7 @@ func (operator *TaskOperator) Execute() {
 				// Complete all other tasks with matching key
 				if operator.Task.Key != "" {
 					for _, keySiblingOperator := range operator.TaskGroup.TaskOperators {
-						if keySiblingOperator.Task.Key == operator.Task.Key {
+						if (keySiblingOperator.Task.Key == operator.Task.Key) && (keySiblingOperator.Task.Id != operator.Task.Id) {
 							keySiblingOperator.Task.IsComplete = true
 							keySiblingOperator.Task.Output = output
 
@@ -314,13 +317,13 @@ func (operator *TaskOperator) Execute() {
 							}:
 							default:
 							}
+
+							// Let children know parent is complete
+							for _, child := range keySiblingOperator.Task.Children {
+								operator.TaskGroup.TaskOperators[child.Id].ParentCompleteEvents <- keySiblingOperator.Task
+							}
 						}
 					}
-				}
-
-				// When a task is completed, find all children and send their operator an ParentCompleteEvents
-				for _, child := range operator.Task.Children {
-					operator.TaskGroup.TaskOperators[child.Id].ParentCompleteEvents <- operator.Task
 				}
 			} else {
 				// Children not ok
@@ -346,11 +349,18 @@ func (operator *TaskOperator) Execute() {
 		default:
 			fmt.Println("no executing event sent")
 		}
+
+		// When a task is completed, find all children and send their operator an ParentCompleteEvents
+		if operator.Task.IsComplete {
+			for _, child := range operator.Task.Children {
+				operator.TaskGroup.TaskOperators[child.Id].ParentCompleteEvents <- operator.Task
+			}
+		}
 	}
 }
 
 // CanExecute determines if a Task is in a state where it can be executed.
-func (task Task) CanExecute(taskGroup *TaskGroup) bool {
+func (task *Task) CanExecute(taskGroup *TaskGroup) bool {
 	// Task should not execute if
 	// - it is already complete
 	// - it is paused
