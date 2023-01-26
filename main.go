@@ -24,12 +24,12 @@ func (client DemoClient) Post(URL string, task *crew.Task) (output interface{}, 
 }
 
 func main() {
-	devChannel := crew.Channel{
+	devWorker := crew.Worker{
 		Id:  "worker-a",
 		Url: "https://us-central1-dose-board-aaron-dev.cloudfunctions.net/worker-a",
 	}
-	channels := make(map[string]crew.Channel)
-	channels[devChannel.Id] = devChannel
+	workers := make(map[string]crew.Worker)
+	workers[devWorker.Id] = devWorker
 
 	// Pull each task group out of storage
 	taskGroups := make(map[string]*crew.TaskGroup)
@@ -50,7 +50,7 @@ func main() {
 		Id:                  "T1",
 		TaskGroupId:         "G1",
 		Name:                "Task One",
-		Channel:             "worker-a",
+		WorkerId:            "worker-a",
 		Workgroup:           "",
 		Key:                 "T1",
 		RemainingAttempts:   5,
@@ -79,7 +79,7 @@ func main() {
 	client := DemoClient{}
 	// Prepare each task group (creates operator for each task)
 	for _, taskGroup := range taskGroups {
-		taskGroup.Prepare(taskGroupTasks[taskGroup.Id], channels, &client)
+		taskGroup.Prepare(taskGroupTasks[taskGroup.Id], workers, &client)
 	}
 
 	// Some debug code...
@@ -95,6 +95,8 @@ func main() {
 
 	// TODO, When Go service is terminating, do this for every task
 	// operatorPtr.Shutdown <- true
+
+	// TODO, When worker is added or renamed, call every taskGroup's WorkerAvailable()
 
 	var wg sync.WaitGroup
 

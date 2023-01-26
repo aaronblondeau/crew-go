@@ -14,7 +14,7 @@ type Task struct {
 	Id                  string        `json:"id"`
 	TaskGroupId         string        `json:"taskGroupId"`
 	Name                string        `json:"name"`
-	Channel             string        `json:"channel"`
+	WorkerId            string        `json:"workerId"`
 	Workgroup           string        `json:"workgroup"`
 	Key                 string        `json:"key"`
 	RemainingAttempts   int           `json:"remainingAttempts"`
@@ -43,25 +43,29 @@ type TaskOperator struct {
 	TaskGroup            *TaskGroup
 	ExternalUpdates      chan map[string]interface{}
 	ExecuteTimer         *time.Timer
+	EvaulateTimer        *time.Timer
 	Shutdown             chan bool
 	ParentCompleteEvents chan *Task
 	Operating            bool
 	Executing            chan bool
 	Terminated           chan bool
 	Client               TaskClient
+	WorkerAvailable      chan struct{}
 }
 
-func NewTaskOperator(task *Task, taskGroup *TaskGroup, channels map[string]Channel, client TaskClient) *TaskOperator {
+func NewTaskOperator(task *Task, taskGroup *TaskGroup, workers map[string]Worker, client TaskClient) *TaskOperator {
 	t := TaskOperator{
 		Task:                 task,
 		TaskGroup:            taskGroup,
 		ExternalUpdates:      make(chan map[string]interface{}, 8),
 		ExecuteTimer:         time.NewTimer(time.Second * -1),
+		EvaulateTimer:        time.NewTimer(time.Second * -1),
 		Shutdown:             make(chan bool),
 		ParentCompleteEvents: make(chan *Task, len(task.Children)),
 		Executing:            make(chan bool),
 		Terminated:           make(chan bool),
 		Client:               client,
+		WorkerAvailable:      make(chan struct{}),
 	}
 	// Don't let initial timer run
 	t.CancelExecute()
@@ -89,6 +93,12 @@ func (operator *TaskOperator) Operate() {
 			select {
 			case <-operator.ExecuteTimer.C:
 				operator.Execute()
+
+			case <-operator.EvaulateTimer.C:
+				operator.Execute()
+
+			case <-operator.WorkerAvailable:
+				operator.Evaluate()
 
 			case update := <-operator.ExternalUpdates:
 				newName, hasNewName := update["name"].(string)
@@ -158,6 +168,7 @@ func (operator *TaskOperator) Evaluate() {
 
 	// If task is good to go, create an execution timer (if one doesn't exist already)
 	if taskCanExecute {
+		operator.CancelEvaluate()
 		now := time.Now()
 		if now.Before(operator.Task.RunAfter) {
 			// Task's run after has not passed
@@ -189,6 +200,17 @@ func (operator *TaskOperator) CancelExecute() {
 	}
 }
 
+// CancelEvaluate cancels a task's evaluation.
+func (operator *TaskOperator) CancelEvaluate() {
+	// Stop and drain timer
+	if !operator.EvaulateTimer.Stop() {
+		select {
+		case <-operator.EvaulateTimer.C:
+		default:
+		}
+	}
+}
+
 // Execute sends a task to a worker and then processes the response or error.
 func (operator *TaskOperator) Execute() {
 	// This func does the work of making http call, processing result or error
@@ -211,10 +233,10 @@ func (operator *TaskOperator) Execute() {
 		default:
 		}
 
-		channel := operator.TaskGroup.Channels[operator.Task.Channel]
-		fmt.Println("Timer fired!  Sending to client:", channel.Url)
+		worker := operator.TaskGroup.Workers[operator.Task.WorkerId]
+		fmt.Println("Timer fired!  Sending to client:", worker.Url)
 
-		output, children, err := operator.Client.Post(channel.Url, operator.Task)
+		output, children, err := operator.Client.Post(worker.Url, operator.Task)
 
 		// decrement attempts
 		operator.Task.RemainingAttempts--
@@ -225,6 +247,11 @@ func (operator *TaskOperator) Execute() {
 		if err != nil {
 			// Capture Error
 			operator.Task.Errors = append(operator.Task.Errors, err)
+
+			// Setup another evaluation after error delay
+			if operator.Task.RemainingAttempts > 0 {
+				operator.EvaulateTimer.Reset(time.Duration(operator.Task.ErrorDelayInSeconds * int(time.Second)))
+			}
 		} else {
 			childrenOk := true
 			// Create child tasks
@@ -342,8 +369,11 @@ func (task Task) CanExecute(taskGroup *TaskGroup) bool {
 		}
 	}
 
-	// TODO add check for channel, cannot execute if no channel
-	// Along with this, setup chan in operator to notify and re-evaluate when channels are added/removed
+	// Cannot execute if no channel
+	_, found := taskGroup.Workers[task.WorkerId]
+	if !found {
+		return found
+	}
 
 	return true
 }

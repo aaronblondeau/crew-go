@@ -22,7 +22,7 @@ func TestCanExecute(t *testing.T) {
 		Id:                "T1",
 		TaskGroupId:       "G1",
 		Name:              "Task One",
-		Channel:           "worker-a",
+		WorkerId:          "worker-a",
 		Workgroup:         "",
 		Key:               "T1",
 		RemainingAttempts: 5,
@@ -40,6 +40,15 @@ func TestCanExecute(t *testing.T) {
 		TaskUpdates:   make(chan TaskUpdateEvent, 8),
 	}
 
+	testWorker := Worker{
+		Id:  "worker-a",
+		Url: "https://example.com/test",
+	}
+	workers := make(map[string]Worker)
+	workers[testWorker.Id] = testWorker
+
+	group.Prepare([]*Task{}, workers, &TaskTestClient{})
+
 	canExecute := task.CanExecute(&group)
 	if !canExecute {
 		t.Fatalf(`CanExecute() = false, want true`)
@@ -51,7 +60,7 @@ func TestCannotExecuteIfTaskIsPaused(t *testing.T) {
 		Id:                "T1",
 		TaskGroupId:       "G1",
 		Name:              "Task One",
-		Channel:           "worker-a",
+		WorkerId:          "worker-a",
 		Workgroup:         "",
 		Key:               "T1",
 		RemainingAttempts: 5,
@@ -88,7 +97,7 @@ func TestCannotExecuteIfParentsIncomplete(t *testing.T) {
 		Id:                "T1",
 		TaskGroupId:       "G1",
 		Name:              "Incomplete Task Parent",
-		Channel:           "test",
+		WorkerId:          "test",
 		Workgroup:         "",
 		Key:               "T1",
 		RemainingAttempts: 5,
@@ -102,7 +111,7 @@ func TestCannotExecuteIfParentsIncomplete(t *testing.T) {
 		Id:                "T2",
 		TaskGroupId:       "G1",
 		Name:              "Task One",
-		Channel:           "test",
+		WorkerId:          "test",
 		Workgroup:         "",
 		Key:               "T1",
 		RemainingAttempts: 5,
@@ -122,14 +131,14 @@ func TestCannotExecuteIfParentsIncomplete(t *testing.T) {
 		TaskUpdates:   make(chan TaskUpdateEvent, 8),
 	}
 
-	testChannel := Channel{
+	testWorker := Worker{
 		Id:  "test",
 		Url: "https://example.com/test",
 	}
-	channels := make(map[string]Channel)
-	channels[testChannel.Id] = testChannel
+	workers := make(map[string]Worker)
+	workers[testWorker.Id] = testWorker
 
-	group.Prepare([]*Task{&parent, &task}, channels, &TaskTestClient{})
+	group.Prepare([]*Task{&parent, &task}, workers, &TaskTestClient{})
 
 	canExecute := task.CanExecute(&group)
 	if canExecute {
@@ -142,7 +151,7 @@ func TestCanUpdateTask(t *testing.T) {
 		Id:                "T2",
 		TaskGroupId:       "G1",
 		Name:              "Task One",
-		Channel:           "test",
+		WorkerId:          "test",
 		Workgroup:         "",
 		Key:               "T1",
 		RemainingAttempts: 5,
@@ -162,7 +171,7 @@ func TestCanUpdateTask(t *testing.T) {
 		TaskUpdates:   make(chan TaskUpdateEvent, 8),
 	}
 
-	group.Prepare([]*Task{&task}, make(map[string]Channel), &TaskTestClient{})
+	group.Prepare([]*Task{&task}, make(map[string]Worker), &TaskTestClient{})
 	group.Operate()
 
 	// This test needs to wait for a TaskUpdate event to know when the task has been updated

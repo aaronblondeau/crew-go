@@ -23,7 +23,7 @@ func TestPrepareInflatesChildren(t *testing.T) {
 		Id:                "T1",
 		TaskGroupId:       "G1",
 		Name:              "Incomplete Task Parent",
-		Channel:           "test",
+		WorkerId:          "test",
 		Workgroup:         "",
 		Key:               "T1",
 		RemainingAttempts: 5,
@@ -37,7 +37,7 @@ func TestPrepareInflatesChildren(t *testing.T) {
 		Id:                "T2",
 		TaskGroupId:       "G1",
 		Name:              "Task One",
-		Channel:           "test",
+		WorkerId:          "test",
 		Workgroup:         "",
 		Key:               "T1",
 		RemainingAttempts: 5,
@@ -57,14 +57,14 @@ func TestPrepareInflatesChildren(t *testing.T) {
 		TaskUpdates:   make(chan TaskUpdateEvent, 8),
 	}
 
-	testChannel := Channel{
+	testWorker := Worker{
 		Id:  "test",
 		Url: "https://example.com/test",
 	}
-	channels := make(map[string]Channel)
-	channels[testChannel.Id] = testChannel
+	workers := make(map[string]Worker)
+	workers[testWorker.Id] = testWorker
 
-	group.Prepare([]*Task{&parent, &task}, channels, &TaskGroupTestClient{})
+	group.Prepare([]*Task{&parent, &task}, workers, &TaskGroupTestClient{})
 
 	if parent.Children[0] != &task {
 		t.Fatal("Parent task's Children slice was not inflated!")
@@ -76,7 +76,7 @@ func TestCanDeleteTask(t *testing.T) {
 		Id:                "T2",
 		TaskGroupId:       "G1",
 		Name:              "Task One",
-		Channel:           "test",
+		WorkerId:          "test",
 		Workgroup:         "",
 		Key:               "T1",
 		RemainingAttempts: 5,
@@ -96,7 +96,7 @@ func TestCanDeleteTask(t *testing.T) {
 		TaskUpdates:   make(chan TaskUpdateEvent, 8),
 	}
 
-	group.Prepare([]*Task{&task}, make(map[string]Channel), &TaskTestClient{})
+	group.Prepare([]*Task{&task}, make(map[string]Worker), &TaskTestClient{})
 	group.Operate()
 	// Give operate goroutine a second to get going
 
@@ -116,7 +116,7 @@ func TestCanAddTask(t *testing.T) {
 		Id:                "T2",
 		TaskGroupId:       "G1",
 		Name:              "Task One",
-		Channel:           "test",
+		WorkerId:          "test",
 		Workgroup:         "",
 		Key:               "T1",
 		RemainingAttempts: 5,
@@ -141,14 +141,14 @@ func TestCanAddTask(t *testing.T) {
 		t.Errorf("len(group.TaskOperators) = %d; want 0", len(group.TaskOperators))
 	}
 
-	testChannel := Channel{
+	testWorker := Worker{
 		Id:  "test",
 		Url: "https://example.com/test",
 	}
-	channels := make(map[string]Channel)
-	channels[testChannel.Id] = testChannel
+	workers := make(map[string]Worker)
+	workers[testWorker.Id] = testWorker
 
-	group.Prepare([]*Task{}, channels, &TaskGroupTestClient{})
+	group.Prepare([]*Task{}, workers, &TaskGroupTestClient{})
 
 	var wg sync.WaitGroup
 	wg.Add(1)

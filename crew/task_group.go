@@ -22,7 +22,7 @@ type TaskGroup struct {
 	Name          string                   `json:"name"`
 	IsPaused      bool                     `json:"isPaused"`
 	CreatedAt     time.Time                `json:"createdAt"`
-	Channels      map[string]Channel       `json:"-"`
+	Workers       map[string]Worker        `json:"-"`
 	TaskOperators map[string]*TaskOperator `json:"-"` // `json:"tasks"`
 	// This is for sending updates to UI, all group and task create/update/delete events should get sent here:
 	TaskUpdates chan TaskUpdateEvent `json:"-"`
@@ -31,8 +31,8 @@ type TaskGroup struct {
 // Prepare adds the given tasks to the group, wrapping each with an operator.
 // This method also populates Task.Children from other Task.ParentIds within
 // the group.
-func (taskGroup TaskGroup) Prepare(tasks []*Task, channels map[string]Channel, client TaskClient) {
-	taskGroup.Channels = channels
+func (taskGroup *TaskGroup) Prepare(tasks []*Task, workers map[string]Worker, client TaskClient) {
+	taskGroup.Workers = workers
 
 	// Key = parentId
 	// Value = child tasks
@@ -40,7 +40,7 @@ func (taskGroup TaskGroup) Prepare(tasks []*Task, channels map[string]Channel, c
 
 	// Create an operator for each task in the group
 	for _, task := range tasks {
-		operator := NewTaskOperator(task, &taskGroup, channels, client)
+		operator := NewTaskOperator(task, taskGroup, workers, client)
 		taskGroup.TaskOperators[task.Id] = operator
 
 		// Track children on first pass
@@ -62,7 +62,7 @@ func (taskGroup TaskGroup) Prepare(tasks []*Task, channels map[string]Channel, c
 	}
 }
 
-func (taskGroup TaskGroup) AddTask(task *Task, client TaskClient) error {
+func (taskGroup *TaskGroup) AddTask(task *Task, client TaskClient) error {
 	// Make sure task doesn't already exist
 	for _, op := range taskGroup.TaskOperators {
 		if op.Task.Id == task.Id {
@@ -79,7 +79,7 @@ func (taskGroup TaskGroup) AddTask(task *Task, client TaskClient) error {
 	}
 
 	// Create operator
-	operator := NewTaskOperator(task, &taskGroup, taskGroup.Channels, client)
+	operator := NewTaskOperator(task, taskGroup, taskGroup.Workers, client)
 
 	// Add to group
 	taskGroup.TaskOperators[task.Id] = operator
@@ -107,7 +107,7 @@ func (taskGroup TaskGroup) AddTask(task *Task, client TaskClient) error {
 	return nil
 }
 
-func (taskGroup TaskGroup) DeleteTask(id string) error {
+func (taskGroup *TaskGroup) DeleteTask(id string) error {
 	// Find the task
 	operator, found := taskGroup.TaskOperators[id]
 	if !found {
@@ -159,8 +159,17 @@ func (taskGroup TaskGroup) DeleteTask(id string) error {
 }
 
 // Operate begins the lifecycle of every task in the group
-func (taskGroup TaskGroup) Operate() {
+func (taskGroup *TaskGroup) Operate() {
 	for _, operator := range taskGroup.TaskOperators {
 		operator.Operate()
+	}
+}
+
+// Let operators know about new (or renamed?) workers
+func (taskGroup *TaskGroup) WorkerAvailable(workerId string) {
+	for _, operator := range taskGroup.TaskOperators {
+		if operator.Task.WorkerId == workerId {
+			operator.WorkerAvailable <- struct{}{}
+		}
 	}
 }
