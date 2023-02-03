@@ -165,6 +165,13 @@ func (taskGroup *TaskGroup) Operate() {
 	}
 }
 
+// Operate terminates the lifecycle of every task in the group
+func (taskGroup *TaskGroup) Shutdown() {
+	for _, operator := range taskGroup.TaskOperators {
+		operator.Shutdown <- true
+	}
+}
+
 // Let operators know about new (or renamed?) workers
 func (taskGroup *TaskGroup) WorkerAvailable(workerId string) {
 	for _, operator := range taskGroup.TaskOperators {

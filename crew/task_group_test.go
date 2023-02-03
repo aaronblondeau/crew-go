@@ -153,16 +153,11 @@ func TestCanAddTask(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
-		for {
-			// Wait for a complete/error event (or timeout the test)
-			select {
-			case event := <-group.TaskUpdates:
-				fmt.Println("Got an update!", event.Event, event.Task.IsComplete)
-				if event.Task.IsComplete {
-					wg.Done()
-					return
-				}
-			default:
+		for event := range group.TaskUpdates {
+			fmt.Println("Got an update!", event.Event, event.Task.IsComplete)
+			if event.Task.IsComplete {
+				wg.Done()
+				return
 			}
 		}
 	}()

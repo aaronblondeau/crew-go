@@ -234,7 +234,7 @@ func (operator *TaskOperator) Execute() {
 		}
 
 		worker := operator.TaskGroup.Workers[operator.Task.WorkerId]
-		fmt.Println("Timer fired!  Sending to client:", worker.Url)
+		fmt.Println("Timer fired!  Sending to client:", worker.Url, operator.Task.Id)
 
 		output, children, err := operator.Client.Post(worker.Url, operator.Task)
 

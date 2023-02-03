@@ -7,13 +7,11 @@ Note, use this to exclude from JSON `json:"-"` : https://pkg.go.dev/encoding/jso
 cd models
 go test
 
-TODO : Tests with TaskClient that create children (verify children run to complete)!
-TODO : Test with parent/child, all complete in order
-
-TODO : Test with bad children
-
 TODO : basic json file persistence
 TODO : HttpPostClient
+TODO : Figure out good value for TaskUpdates channel queue size
+
+TODO : Implement API / Server Sent Events
 
 TODO : cleanup "cron" for removing old taskgroups
 

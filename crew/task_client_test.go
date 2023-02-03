@@ -373,3 +373,292 @@ func TestSingleChildOutput(t *testing.T) {
 		t.Fatalf(`child.IsComplete = %v, want true`, child.IsComplete)
 	}
 }
+
+func TestMultipleChildOutput(t *testing.T) {
+	parent := Task{
+		Id:                "P1",
+		TaskGroupId:       "G1",
+		Name:              "Parent",
+		WorkerId:          "test",
+		Workgroup:         "",
+		Key:               "T1",
+		RemainingAttempts: 2,
+		// Start task as paused
+		IsPaused:       false,
+		IsComplete:     false,
+		Priority:       1,
+		ProgressWeight: 1,
+		ParentIds:      []string{},
+	}
+
+	child1 := Task{
+		Id:                "C1",
+		TaskGroupId:       "G1",
+		Name:              "Child",
+		WorkerId:          "test",
+		Workgroup:         "",
+		Key:               "C1",
+		RemainingAttempts: 2,
+		// Start task as paused
+		IsPaused:       false,
+		IsComplete:     false,
+		Priority:       1,
+		ProgressWeight: 1,
+		ParentIds:      []string{},
+	}
+
+	child2A := Task{
+		Id:                "C2A",
+		TaskGroupId:       "G1",
+		Name:              "Child",
+		WorkerId:          "test",
+		Workgroup:         "",
+		Key:               "C2A",
+		RemainingAttempts: 2,
+		// Start task as paused
+		IsPaused:       false,
+		IsComplete:     false,
+		Priority:       1,
+		ProgressWeight: 1,
+		ParentIds:      []string{"C1"},
+	}
+
+	child2B := Task{
+		Id:                "C2B",
+		TaskGroupId:       "G1",
+		Name:              "Child",
+		WorkerId:          "test",
+		Workgroup:         "",
+		Key:               "C2B",
+		RemainingAttempts: 2,
+		// Start task as paused
+		IsPaused:       false,
+		IsComplete:     false,
+		Priority:       1,
+		ProgressWeight: 1,
+		ParentIds:      []string{"C1"},
+	}
+
+	child3 := Task{
+		Id:                "C3",
+		TaskGroupId:       "G1",
+		Name:              "Child",
+		WorkerId:          "test",
+		Workgroup:         "",
+		Key:               "C3",
+		RemainingAttempts: 2,
+		// Start task as paused
+		IsPaused:       false,
+		IsComplete:     false,
+		Priority:       1,
+		ProgressWeight: 1,
+		ParentIds:      []string{"C2A", "C2B"},
+	}
+
+	group := TaskGroup{
+		Id:            "G1",
+		Name:          "Test",
+		IsPaused:      false,
+		CreatedAt:     time.Now(),
+		TaskOperators: make(map[string]*TaskOperator),
+		TaskUpdates:   make(chan TaskUpdateEvent, 8),
+	}
+
+	if len(group.TaskOperators) != 0 {
+		t.Errorf("len(group.TaskOperators) = %d; want 0", len(group.TaskOperators))
+	}
+
+	testWorker := Worker{
+		Id:  "test",
+		Url: "https://example.com/test",
+	}
+	workers := make(map[string]Worker)
+	workers[testWorker.Id] = testWorker
+
+	var wgParent sync.WaitGroup
+	wgParent.Add(1)
+	var wgChildren sync.WaitGroup
+	wgChildren.Add(4)
+	childCompletionOrder := []string{}
+	go func() {
+		for event := range group.TaskUpdates {
+			fmt.Println("Got an update!", event.Event, event.Task.Id, event.Task.IsComplete)
+			if event.Task.Id == parent.Id {
+				if event.Task.IsComplete {
+					wgParent.Done()
+				}
+			}
+			if event.Task.Id == child1.Id || event.Task.Id == child2A.Id || event.Task.Id == child2B.Id || event.Task.Id == child3.Id {
+				if event.Task.IsComplete {
+					wgChildren.Done()
+					childCompletionOrder = append(childCompletionOrder, event.Task.Id)
+				}
+				fmt.Println("~~ len(childCompletionOrder)", len(childCompletionOrder))
+				if len(childCompletionOrder) > 3 {
+					return
+				}
+			}
+		}
+	}()
+
+	client := PostReturnsChildrenClient{}
+	client.Output = map[string]interface{}{
+		"children": "How they grow...",
+	}
+	client.Children = []*Task{&child1, &child2A, &child2B, &child3}
+
+	group.Prepare([]*Task{&parent}, workers, &client)
+	group.Operate()
+
+	// Wait for task to complete
+	wgParent.Wait()
+	if parent.IsComplete != true {
+		t.Fatalf(`parent.IsComplete = %v, want true`, parent.IsComplete)
+	}
+	if len(parent.Children) != 4 {
+		t.Fatalf(`len(parent.Children) = %v, want 4`, len(parent.Children))
+	}
+
+	// Wait for child to complete
+	wgChildren.Wait()
+	if child1.IsComplete != true {
+		t.Fatalf(`child1.IsComplete = %v, want true`, child1.IsComplete)
+	}
+	if child2A.IsComplete != true {
+		t.Fatalf(`child2A.IsComplete = %v, want true`, child2A.IsComplete)
+	}
+	if child2B.IsComplete != true {
+		t.Fatalf(`child2B.IsComplete = %v, want true`, child2B.IsComplete)
+	}
+	if child3.IsComplete != true {
+		t.Fatalf(`child3.IsComplete = %v, want true`, child3.IsComplete)
+	}
+
+	// Make sure children completed in proper order
+	if childCompletionOrder[0] != "C1" {
+		t.Fatalf(`childCompletionOrder[0] = %v, want C1`, childCompletionOrder[0])
+	}
+	if !(childCompletionOrder[1] == "C2A" || childCompletionOrder[1] == "C2B") {
+		t.Fatalf(`childCompletionOrder[1] = %v, want C2A or C2B`, childCompletionOrder[1])
+	}
+	if !(childCompletionOrder[2] == "C2A" || childCompletionOrder[2] == "C2B") {
+		t.Fatalf(`childCompletionOrder[2] = %v, want C2A or C2B`, childCompletionOrder[2])
+	}
+	if childCompletionOrder[3] != "C3" {
+		t.Fatalf(`childCompletionOrder[3] = %v, want C3`, childCompletionOrder[3])
+	}
+}
+
+func TestBadChildrenOutput(t *testing.T) {
+	parent := Task{
+		Id:                "P1",
+		TaskGroupId:       "G1",
+		Name:              "Parent",
+		WorkerId:          "test",
+		Workgroup:         "",
+		Key:               "T1",
+		RemainingAttempts: 2,
+		// Start task as paused
+		IsPaused:       false,
+		IsComplete:     false,
+		Priority:       1,
+		ProgressWeight: 1,
+		ParentIds:      []string{},
+	}
+
+	child1 := Task{
+		Id:                "C1",
+		TaskGroupId:       "G1",
+		Name:              "Child",
+		WorkerId:          "test",
+		Workgroup:         "",
+		Key:               "C1",
+		RemainingAttempts: 2,
+		// Start task as paused
+		IsPaused:       false,
+		IsComplete:     false,
+		Priority:       1,
+		ProgressWeight: 1,
+		ParentIds:      []string{},
+	}
+
+	child2 := Task{
+		Id:                "C1",
+		TaskGroupId:       "G1",
+		Name:              "Child",
+		WorkerId:          "test",
+		Workgroup:         "",
+		Key:               "C1",
+		RemainingAttempts: 2,
+		// Start task as paused
+		IsPaused:       false,
+		IsComplete:     false,
+		Priority:       1,
+		ProgressWeight: 1,
+		ParentIds:      []string{"CX"},
+	}
+
+	group := TaskGroup{
+		Id:            "G1",
+		Name:          "Test",
+		IsPaused:      false,
+		CreatedAt:     time.Now(),
+		TaskOperators: make(map[string]*TaskOperator),
+		TaskUpdates:   make(chan TaskUpdateEvent, 8),
+	}
+
+	if len(group.TaskOperators) != 0 {
+		t.Errorf("len(group.TaskOperators) = %d; want 0", len(group.TaskOperators))
+	}
+
+	testWorker := Worker{
+		Id:  "test",
+		Url: "https://example.com/test",
+	}
+	workers := make(map[string]Worker)
+	workers[testWorker.Id] = testWorker
+
+	var wgParent sync.WaitGroup
+	wgParent.Add(1)
+	go func() {
+		defer wgParent.Done()
+		for event := range group.TaskUpdates {
+			fmt.Println("Got an update!", event.Event, event.Task.Id, event.Task.IsComplete)
+			if event.Task.Id == parent.Id {
+				if event.Task.IsComplete || len(event.Task.Errors) > 0 {
+					return
+				}
+			}
+		}
+	}()
+
+	client := PostReturnsChildrenClient{}
+	client.Output = map[string]interface{}{
+		"children": "How they grow...",
+	}
+	client.Children = []*Task{&child1, &child2}
+
+	group.Prepare([]*Task{&parent}, workers, &client)
+	group.Operate()
+
+	// Wait for task to complete
+	wgParent.Wait()
+	if parent.IsComplete != false {
+		t.Fatalf(`parent.IsComplete = %v, want false`, parent.IsComplete)
+	}
+	if len(parent.Children) != 0 {
+		t.Fatalf(`len(parent.Children) = %v, want 0`, len(parent.Children))
+	}
+
+	// Workgroup should still only have one task
+	if len(group.TaskOperators) != 1 {
+		t.Fatalf(`len(group.TaskOperators) = %v, want 1`, len(group.TaskOperators))
+	}
+
+	// parent should have an error
+	if len(parent.Errors) != 1 {
+		t.Fatalf(`len(parent.Errors) = %v, want 1`, len(parent.Errors))
+	}
+
+	group.Shutdown()
+}
