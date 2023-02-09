@@ -18,29 +18,39 @@ type TaskUpdateEvent struct {
 
 // A TaskGroup represents a collection of all the tasks required to complete a body of work.
 type TaskGroup struct {
-	Id            string                                   `json:"id"`
-	Name          string                                   `json:"name"`
-	IsPaused      bool                                     `json:"isPaused"`
-	CreatedAt     time.Time                                `json:"createdAt"`
-	urlForTask    func(task *Task) (url string, err error) `json:"-"`
-	TaskOperators map[string]*TaskOperator                 `json:"-"` // `json:"tasks"`
+	Id            string                   `json:"id"`
+	Name          string                   `json:"name"`
+	IsPaused      bool                     `json:"isPaused"`
+	CreatedAt     time.Time                `json:"createdAt"`
+	TaskOperators map[string]*TaskOperator `json:"-"` // `json:"tasks"`
 	// This is for sending updates to UI, all group and task create/update/delete events should get sent here:
 	TaskUpdates chan TaskUpdateEvent `json:"-"`
+}
+
+func NewTaskGroup(id string, name string) *TaskGroup {
+	tg := TaskGroup{
+		Id:            id,
+		Name:          name,
+		IsPaused:      false,
+		CreatedAt:     time.Now(),
+		TaskOperators: make(map[string]*TaskOperator),
+		TaskUpdates:   make(chan TaskUpdateEvent, 8),
+	}
+	return &tg
 }
 
 // Prepare adds the given tasks to the group, wrapping each with an operator.
 // This method also populates Task.Children from other Task.ParentIds within
 // the group.
-func (taskGroup *TaskGroup) Prepare(tasks []*Task, urlForTask func(task *Task) (url string, err error), client TaskClient) {
-	taskGroup.urlForTask = urlForTask
-
+func (taskGroup *TaskGroup) PreloadTasks(tasks []*Task, client TaskClient) {
 	// Key = parentId
 	// Value = child tasks
 	childrenIndex := make(map[string][]*Task)
 
 	// Create an operator for each task in the group
 	for _, task := range tasks {
-		operator := NewTaskOperator(task, taskGroup, client)
+		operator := NewTaskOperator(task, taskGroup)
+		operator.Client = client
 		taskGroup.TaskOperators[task.Id] = operator
 
 		// Track children on first pass
@@ -79,7 +89,8 @@ func (taskGroup *TaskGroup) AddTask(task *Task, client TaskClient) error {
 	}
 
 	// Create operator
-	operator := NewTaskOperator(task, taskGroup, client)
+	operator := NewTaskOperator(task, taskGroup)
+	operator.Client = client
 
 	// Add to group
 	taskGroup.TaskOperators[task.Id] = operator

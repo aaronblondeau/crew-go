@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -9,22 +10,13 @@ import (
 )
 
 func main() {
-	urlGen := func(task *crew.Task) (url string, err error) {
-		return "https://us-central1-dose-board-aaron-dev.cloudfunctions.net/" + task.Worker, nil
-	}
+	os.Setenv("CREW_WORKER_BASE_URL", "https://us-central1-dose-board-aaron-dev.cloudfunctions.net/")
 
 	// Pull each task group out of storage
 	taskGroups := make(map[string]*crew.TaskGroup)
-	group := crew.TaskGroup{
-		Id:            "G1",
-		Name:          "Test",
-		IsPaused:      false,
-		CreatedAt:     time.Now(),
-		TaskOperators: make(map[string]*crew.TaskOperator),
-		TaskUpdates:   make(chan crew.TaskUpdateEvent, 8),
-	}
+	group := crew.NewTaskGroup("G1", "test")
 	// Keeping an index of them by id
-	taskGroups[group.Id] = &group
+	taskGroups[group.Id] = group
 
 	// Pull each task out of storage
 	taskGroupTasks := make(map[string][]*crew.Task)
@@ -58,10 +50,10 @@ func main() {
 	}
 	taskGroupTasks[task.TaskGroupId] = append(taskGroupTasks[task.TaskGroupId], &task)
 
-	client := crew.HttpPostClient{}
 	// Prepare each task group (creates operator for each task)
+	httpPostClient := crew.NewHttpPostClient()
 	for _, taskGroup := range taskGroups {
-		taskGroup.Prepare(taskGroupTasks[taskGroup.Id], urlGen, &client)
+		taskGroup.PreloadTasks(taskGroupTasks[taskGroup.Id], httpPostClient)
 	}
 
 	// Some debug code...

@@ -4,12 +4,11 @@ import (
 	"fmt"
 	"sync"
 	"testing"
-	"time"
 )
 
 type TaskGroupTestClient struct{}
 
-func (client TaskGroupTestClient) Post(URL string, task *Task, taskGroup *TaskGroup) (response WorkerResponse, err error) {
+func (client TaskGroupTestClient) Post(task *Task, taskGroup *TaskGroup) (response WorkerResponse, err error) {
 	response = WorkerResponse{
 		Output: map[string]interface{}{
 			"demo": "Test Complete",
@@ -24,12 +23,12 @@ func (client TaskGroupTestClient) Post(URL string, task *Task, taskGroup *TaskGr
 
 func TestPrepareInflatesChildren(t *testing.T) {
 	parent := Task{
-		Id:                "T1",
-		TaskGroupId:       "G1",
+		Id:                "T7A",
+		TaskGroupId:       "G7",
 		Name:              "Incomplete Task Parent",
 		Worker:            "test",
 		Workgroup:         "",
-		Key:               "T1",
+		Key:               "T7A",
 		RemainingAttempts: 5,
 		IsPaused:          false,
 		IsComplete:        false,
@@ -38,34 +37,21 @@ func TestPrepareInflatesChildren(t *testing.T) {
 	}
 
 	task := Task{
-		Id:                "T2",
-		TaskGroupId:       "G1",
-		Name:              "Task One",
+		Id:                "T7B",
+		TaskGroupId:       "G7",
+		Name:              "Child",
 		Worker:            "test",
 		Workgroup:         "",
-		Key:               "T1",
+		Key:               "T7B",
 		RemainingAttempts: 5,
 		IsPaused:          false,
 		IsComplete:        false,
 		Priority:          1,
 		ProgressWeight:    1,
-		ParentIds:         []string{"T1"},
+		ParentIds:         []string{"T7A"},
 	}
-
-	group := TaskGroup{
-		Id:            "G1",
-		Name:          "Test",
-		IsPaused:      false,
-		CreatedAt:     time.Now(),
-		TaskOperators: make(map[string]*TaskOperator),
-		TaskUpdates:   make(chan TaskUpdateEvent, 8),
-	}
-
-	urlGen := func(task *Task) (url string, err error) {
-		return "https://example.com/test", nil
-	}
-
-	group.Prepare([]*Task{&parent, &task}, urlGen, &TaskGroupTestClient{})
+	group := NewTaskGroup("G7", "Test")
+	group.PreloadTasks([]*Task{&parent, &task}, &TaskGroupTestClient{})
 
 	if parent.Children[0] != &task {
 		t.Fatal("Parent task's Children slice was not inflated!")
@@ -74,12 +60,12 @@ func TestPrepareInflatesChildren(t *testing.T) {
 
 func TestCanDeleteTask(t *testing.T) {
 	task := Task{
-		Id:                "T2",
-		TaskGroupId:       "G1",
-		Name:              "Task One",
+		Id:                "T8",
+		TaskGroupId:       "G8",
+		Name:              "Task Eight",
 		Worker:            "test",
 		Workgroup:         "",
-		Key:               "T1",
+		Key:               "T8",
 		RemainingAttempts: 5,
 		IsPaused:          true,
 		IsComplete:        false,
@@ -88,22 +74,9 @@ func TestCanDeleteTask(t *testing.T) {
 		ParentIds:         []string{},
 	}
 
-	group := TaskGroup{
-		Id:            "G1",
-		Name:          "Test",
-		IsPaused:      true,
-		CreatedAt:     time.Now(),
-		TaskOperators: make(map[string]*TaskOperator),
-		TaskUpdates:   make(chan TaskUpdateEvent, 8),
-	}
-
-	urlGen := func(task *Task) (url string, err error) {
-		return "https://example.com/test", nil
-	}
-
-	group.Prepare([]*Task{&task}, urlGen, &TaskTestClient{})
-	group.Operate()
-	// Give operate goroutine a second to get going
+	group := NewTaskGroup("G8", "Test")
+	group.PreloadTasks([]*Task{&task}, &TaskGroupTestClient{})
+	// group.Operate()
 
 	if len(group.TaskOperators) != 1 {
 		t.Errorf("len(group.TaskOperators) = %d; want 1", len(group.TaskOperators))
@@ -118,12 +91,12 @@ func TestCanDeleteTask(t *testing.T) {
 
 func TestCanAddTask(t *testing.T) {
 	task := Task{
-		Id:                "T2",
-		TaskGroupId:       "G1",
-		Name:              "Task One",
+		Id:                "T9",
+		TaskGroupId:       "G9",
+		Name:              "Task Nine",
 		Worker:            "test",
 		Workgroup:         "",
-		Key:               "T1",
+		Key:               "T9",
 		RemainingAttempts: 5,
 		// Start task as paused
 		IsPaused:       true,
@@ -133,24 +106,13 @@ func TestCanAddTask(t *testing.T) {
 		ParentIds:      []string{},
 	}
 
-	group := TaskGroup{
-		Id:            "G1",
-		Name:          "Test",
-		IsPaused:      false,
-		CreatedAt:     time.Now(),
-		TaskOperators: make(map[string]*TaskOperator),
-		TaskUpdates:   make(chan TaskUpdateEvent, 8),
-	}
+	group := NewTaskGroup("G9", "Test")
 
 	if len(group.TaskOperators) != 0 {
 		t.Errorf("len(group.TaskOperators) = %d; want 0", len(group.TaskOperators))
 	}
 
-	urlGen := func(task *Task) (url string, err error) {
-		return "https://example.com/test", nil
-	}
-
-	group.Prepare([]*Task{}, urlGen, &TaskGroupTestClient{})
+	group.PreloadTasks([]*Task{}, &TaskGroupTestClient{})
 
 	var wg sync.WaitGroup
 	wg.Add(1)

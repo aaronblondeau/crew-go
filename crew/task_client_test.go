@@ -4,14 +4,13 @@ import (
 	"fmt"
 	"sync"
 	"testing"
-	"time"
 )
 
 type PostInvocationCountClient struct {
 	PostInvocationCount int
 }
 
-func (client *PostInvocationCountClient) Post(URL string, task *Task, taskGroup *TaskGroup) (response WorkerResponse, err error) {
+func (client *PostInvocationCountClient) Post(task *Task, taskGroup *TaskGroup) (response WorkerResponse, err error) {
 	client.PostInvocationCount++
 	response = WorkerResponse{
 		Output: map[string]interface{}{
@@ -30,7 +29,7 @@ type PostReturnsChildrenClient struct {
 	Output   interface{}
 }
 
-func (client *PostReturnsChildrenClient) Post(URL string, task *Task, taskGroup *TaskGroup) (response WorkerResponse, err error) {
+func (client *PostReturnsChildrenClient) Post(task *Task, taskGroup *TaskGroup) (response WorkerResponse, err error) {
 	var children []*Task
 	if task.Name == "Parent" {
 		children = client.Children
@@ -52,7 +51,7 @@ type PostErrorClient struct {
 	Output       interface{}
 }
 
-func (client *PostErrorClient) Post(URL string, task *Task, taskGroup *TaskGroup) (response WorkerResponse, err error) {
+func (client *PostErrorClient) Post(task *Task, taskGroup *TaskGroup) (response WorkerResponse, err error) {
 	response = WorkerResponse{
 		Output:                  client.Output,
 		Children:                make([]*Task, 0),
@@ -69,7 +68,7 @@ type FailOnceThenSucceedClient struct {
 	Output              interface{}
 }
 
-func (client *FailOnceThenSucceedClient) Post(URL string, task *Task, taskGroup *TaskGroup) (response WorkerResponse, err error) {
+func (client *FailOnceThenSucceedClient) Post(task *Task, taskGroup *TaskGroup) (response WorkerResponse, err error) {
 	var workerError interface{}
 	if client.PostInvocationCount == 0 {
 		workerError = client.ErrorMessage
@@ -92,7 +91,7 @@ func (client *FailOnceThenSucceedClient) Post(URL string, task *Task, taskGroup 
 
 func TestTaskInvokesClientPost(t *testing.T) {
 	task := Task{
-		Id:                "T2",
+		Id:                "T1",
 		TaskGroupId:       "G1",
 		Name:              "Task One",
 		Worker:            "test",
@@ -106,22 +105,10 @@ func TestTaskInvokesClientPost(t *testing.T) {
 		ProgressWeight: 1,
 		ParentIds:      []string{},
 	}
-
-	group := TaskGroup{
-		Id:            "G1",
-		Name:          "Test",
-		IsPaused:      false,
-		CreatedAt:     time.Now(),
-		TaskOperators: make(map[string]*TaskOperator),
-		TaskUpdates:   make(chan TaskUpdateEvent, 8),
-	}
+	group := NewTaskGroup("G1", "Test")
 
 	if len(group.TaskOperators) != 0 {
 		t.Errorf("len(group.TaskOperators) = %d; want 0", len(group.TaskOperators))
-	}
-
-	urlGen := func(task *Task) (url string, err error) {
-		return "https://example.com/test", nil
 	}
 
 	var wg sync.WaitGroup
@@ -137,7 +124,7 @@ func TestTaskInvokesClientPost(t *testing.T) {
 	}()
 
 	client := PostInvocationCountClient{}
-	group.Prepare([]*Task{&task}, urlGen, &client)
+	group.PreloadTasks([]*Task{&task}, &client)
 	group.Operate()
 
 	// Wait for task to complete
@@ -158,11 +145,11 @@ func TestTaskInvokesClientPost(t *testing.T) {
 func TestCaptureError(t *testing.T) {
 	task := Task{
 		Id:                "T2",
-		TaskGroupId:       "G1",
-		Name:              "Task One",
+		TaskGroupId:       "G2",
+		Name:              "Task Two",
 		Worker:            "test",
 		Workgroup:         "",
-		Key:               "T1",
+		Key:               "T2",
 		RemainingAttempts: 1,
 		// Start task as paused
 		IsPaused:       false,
@@ -171,22 +158,10 @@ func TestCaptureError(t *testing.T) {
 		ProgressWeight: 1,
 		ParentIds:      []string{},
 	}
-
-	group := TaskGroup{
-		Id:            "G1",
-		Name:          "Test",
-		IsPaused:      false,
-		CreatedAt:     time.Now(),
-		TaskOperators: make(map[string]*TaskOperator),
-		TaskUpdates:   make(chan TaskUpdateEvent, 8),
-	}
+	group := NewTaskGroup("G2", "Test")
 
 	if len(group.TaskOperators) != 0 {
 		t.Errorf("len(group.TaskOperators) = %d; want 0", len(group.TaskOperators))
-	}
-
-	urlGen := func(task *Task) (url string, err error) {
-		return "https://example.com/test", nil
 	}
 
 	var wg sync.WaitGroup
@@ -203,7 +178,7 @@ func TestCaptureError(t *testing.T) {
 
 	client := PostErrorClient{}
 	client.ErrorMessage = "Oops, I died"
-	group.Prepare([]*Task{&task}, urlGen, &client)
+	group.PreloadTasks([]*Task{&task}, &client)
 	group.Operate()
 
 	// Wait for task to complete
@@ -223,12 +198,12 @@ func TestCaptureError(t *testing.T) {
 
 func TestErrorOnceThenSucceed(t *testing.T) {
 	task := Task{
-		Id:                "T2",
-		TaskGroupId:       "G1",
-		Name:              "Task One",
+		Id:                "T3",
+		TaskGroupId:       "G3",
+		Name:              "Task Three",
 		Worker:            "test",
 		Workgroup:         "",
-		Key:               "T1",
+		Key:               "T3",
 		RemainingAttempts: 2,
 		// Start task as paused
 		IsPaused:            false,
@@ -238,22 +213,10 @@ func TestErrorOnceThenSucceed(t *testing.T) {
 		ParentIds:           []string{},
 		ErrorDelayInSeconds: 1.0,
 	}
-
-	group := TaskGroup{
-		Id:            "G1",
-		Name:          "Test",
-		IsPaused:      false,
-		CreatedAt:     time.Now(),
-		TaskOperators: make(map[string]*TaskOperator),
-		TaskUpdates:   make(chan TaskUpdateEvent, 8),
-	}
+	group := NewTaskGroup("G3", "Test")
 
 	if len(group.TaskOperators) != 0 {
 		t.Errorf("len(group.TaskOperators) = %d; want 0", len(group.TaskOperators))
-	}
-
-	urlGen := func(task *Task) (url string, err error) {
-		return "https://example.com/test", nil
 	}
 
 	var wg sync.WaitGroup
@@ -270,7 +233,7 @@ func TestErrorOnceThenSucceed(t *testing.T) {
 
 	client := FailOnceThenSucceedClient{}
 	client.ErrorMessage = "Oops, I goofed"
-	group.Prepare([]*Task{&task}, urlGen, &client)
+	group.PreloadTasks([]*Task{&task}, &client)
 	group.Operate()
 
 	// Wait for task to complete
@@ -290,12 +253,12 @@ func TestErrorOnceThenSucceed(t *testing.T) {
 
 func TestSingleChildOutput(t *testing.T) {
 	parent := Task{
-		Id:                "P1",
-		TaskGroupId:       "G1",
+		Id:                "T4P",
+		TaskGroupId:       "G4",
 		Name:              "Parent",
 		Worker:            "test",
 		Workgroup:         "",
-		Key:               "T1",
+		Key:               "T4P",
 		RemainingAttempts: 2,
 		// Start task as paused
 		IsPaused:       false,
@@ -306,12 +269,12 @@ func TestSingleChildOutput(t *testing.T) {
 	}
 
 	child := Task{
-		Id:                "C1",
-		TaskGroupId:       "G1",
+		Id:                "T4C",
+		TaskGroupId:       "G4",
 		Name:              "Child",
 		Worker:            "test",
 		Workgroup:         "",
-		Key:               "C1",
+		Key:               "T4C",
 		RemainingAttempts: 2,
 		// Start task as paused
 		IsPaused:       false,
@@ -321,21 +284,10 @@ func TestSingleChildOutput(t *testing.T) {
 		ParentIds:      []string{},
 	}
 
-	group := TaskGroup{
-		Id:            "G1",
-		Name:          "Test",
-		IsPaused:      false,
-		CreatedAt:     time.Now(),
-		TaskOperators: make(map[string]*TaskOperator),
-		TaskUpdates:   make(chan TaskUpdateEvent, 8),
-	}
+	group := NewTaskGroup("G4", "Test")
 
 	if len(group.TaskOperators) != 0 {
 		t.Errorf("len(group.TaskOperators) = %d; want 0", len(group.TaskOperators))
-	}
-
-	urlGen := func(task *Task) (url string, err error) {
-		return "https://example.com/test", nil
 	}
 
 	var wgParent sync.WaitGroup
@@ -364,8 +316,7 @@ func TestSingleChildOutput(t *testing.T) {
 		"children": "How they grow...",
 	}
 	client.Children = []*Task{&child}
-
-	group.Prepare([]*Task{&parent}, urlGen, &client)
+	group.PreloadTasks([]*Task{&parent}, &client)
 	group.Operate()
 
 	// Wait for task to complete
@@ -386,12 +337,12 @@ func TestSingleChildOutput(t *testing.T) {
 
 func TestMultipleChildOutput(t *testing.T) {
 	parent := Task{
-		Id:                "P1",
-		TaskGroupId:       "G1",
+		Id:                "T5P",
+		TaskGroupId:       "G5",
 		Name:              "Parent",
 		Worker:            "test",
 		Workgroup:         "",
-		Key:               "T1",
+		Key:               "T5P",
 		RemainingAttempts: 2,
 		// Start task as paused
 		IsPaused:       false,
@@ -402,12 +353,12 @@ func TestMultipleChildOutput(t *testing.T) {
 	}
 
 	child1 := Task{
-		Id:                "C1",
-		TaskGroupId:       "G1",
+		Id:                "T5C1",
+		TaskGroupId:       "G5",
 		Name:              "Child",
 		Worker:            "test",
 		Workgroup:         "",
-		Key:               "C1",
+		Key:               "T5C1",
 		RemainingAttempts: 2,
 		// Start task as paused
 		IsPaused:       false,
@@ -418,68 +369,57 @@ func TestMultipleChildOutput(t *testing.T) {
 	}
 
 	child2A := Task{
-		Id:                "C2A",
-		TaskGroupId:       "G1",
+		Id:                "T5C2A",
+		TaskGroupId:       "G5",
 		Name:              "Child",
 		Worker:            "test",
 		Workgroup:         "",
-		Key:               "C2A",
+		Key:               "T5C2A",
 		RemainingAttempts: 2,
 		// Start task as paused
 		IsPaused:       false,
 		IsComplete:     false,
 		Priority:       1,
 		ProgressWeight: 1,
-		ParentIds:      []string{"C1"},
+		ParentIds:      []string{"T5C1"},
 	}
 
 	child2B := Task{
-		Id:                "C2B",
-		TaskGroupId:       "G1",
+		Id:                "T5C2B",
+		TaskGroupId:       "G5",
 		Name:              "Child",
 		Worker:            "test",
 		Workgroup:         "",
-		Key:               "C2B",
+		Key:               "T5C2B",
 		RemainingAttempts: 2,
 		// Start task as paused
 		IsPaused:       false,
 		IsComplete:     false,
 		Priority:       1,
 		ProgressWeight: 1,
-		ParentIds:      []string{"C1"},
+		ParentIds:      []string{"T5C1"},
 	}
 
 	child3 := Task{
-		Id:                "C3",
-		TaskGroupId:       "G1",
+		Id:                "T5C3",
+		TaskGroupId:       "G5",
 		Name:              "Child",
 		Worker:            "test",
 		Workgroup:         "",
-		Key:               "C3",
+		Key:               "T5C3",
 		RemainingAttempts: 2,
 		// Start task as paused
 		IsPaused:       false,
 		IsComplete:     false,
 		Priority:       1,
 		ProgressWeight: 1,
-		ParentIds:      []string{"C2A", "C2B"},
+		ParentIds:      []string{"T5C2A", "T5C2B"},
 	}
 
-	group := TaskGroup{
-		Id:            "G1",
-		Name:          "Test",
-		IsPaused:      false,
-		CreatedAt:     time.Now(),
-		TaskOperators: make(map[string]*TaskOperator),
-		TaskUpdates:   make(chan TaskUpdateEvent, 8),
-	}
+	group := NewTaskGroup("G5", "Test")
 
 	if len(group.TaskOperators) != 0 {
 		t.Errorf("len(group.TaskOperators) = %d; want 0", len(group.TaskOperators))
-	}
-
-	urlGen := func(task *Task) (url string, err error) {
-		return "https://example.com/test", nil
 	}
 
 	var wgParent sync.WaitGroup
@@ -513,8 +453,7 @@ func TestMultipleChildOutput(t *testing.T) {
 		"children": "How they grow...",
 	}
 	client.Children = []*Task{&child1, &child2A, &child2B, &child3}
-
-	group.Prepare([]*Task{&parent}, urlGen, &client)
+	group.PreloadTasks([]*Task{&parent}, &client)
 	group.Operate()
 
 	// Wait for task to complete
@@ -542,28 +481,28 @@ func TestMultipleChildOutput(t *testing.T) {
 	}
 
 	// Make sure children completed in proper order
-	if childCompletionOrder[0] != "C1" {
-		t.Fatalf(`childCompletionOrder[0] = %v, want C1`, childCompletionOrder[0])
+	if childCompletionOrder[0] != "T5C1" {
+		t.Fatalf(`childCompletionOrder[0] = %v, want T5C1`, childCompletionOrder[0])
 	}
-	if !(childCompletionOrder[1] == "C2A" || childCompletionOrder[1] == "C2B") {
-		t.Fatalf(`childCompletionOrder[1] = %v, want C2A or C2B`, childCompletionOrder[1])
+	if !(childCompletionOrder[1] == "T5C2A" || childCompletionOrder[1] == "T5C2B") {
+		t.Fatalf(`childCompletionOrder[1] = %v, want T5C2A or T5C2B`, childCompletionOrder[1])
 	}
-	if !(childCompletionOrder[2] == "C2A" || childCompletionOrder[2] == "C2B") {
-		t.Fatalf(`childCompletionOrder[2] = %v, want C2A or C2B`, childCompletionOrder[2])
+	if !(childCompletionOrder[2] == "T5C2A" || childCompletionOrder[2] == "T5C2B") {
+		t.Fatalf(`childCompletionOrder[2] = %v, want T5C2A or T5C2B`, childCompletionOrder[2])
 	}
-	if childCompletionOrder[3] != "C3" {
-		t.Fatalf(`childCompletionOrder[3] = %v, want C3`, childCompletionOrder[3])
+	if childCompletionOrder[3] != "T5C3" {
+		t.Fatalf(`childCompletionOrder[3] = %v, want T5C3`, childCompletionOrder[3])
 	}
 }
 
 func TestBadChildrenOutput(t *testing.T) {
 	parent := Task{
-		Id:                "P1",
-		TaskGroupId:       "G1",
+		Id:                "T6P1",
+		TaskGroupId:       "G6",
 		Name:              "Parent",
 		Worker:            "test",
 		Workgroup:         "",
-		Key:               "T1",
+		Key:               "T6P1",
 		RemainingAttempts: 2,
 		// Start task as paused
 		IsPaused:       false,
@@ -574,12 +513,12 @@ func TestBadChildrenOutput(t *testing.T) {
 	}
 
 	child1 := Task{
-		Id:                "C1",
-		TaskGroupId:       "G1",
+		Id:                "T6C1",
+		TaskGroupId:       "G6",
 		Name:              "Child",
 		Worker:            "test",
 		Workgroup:         "",
-		Key:               "C1",
+		Key:               "T6C1",
 		RemainingAttempts: 2,
 		// Start task as paused
 		IsPaused:       false,
@@ -590,12 +529,12 @@ func TestBadChildrenOutput(t *testing.T) {
 	}
 
 	child2 := Task{
-		Id:                "C1",
-		TaskGroupId:       "G1",
+		Id:                "T6C2",
+		TaskGroupId:       "G6",
 		Name:              "Child",
 		Worker:            "test",
 		Workgroup:         "",
-		Key:               "C1",
+		Key:               "T6C2",
 		RemainingAttempts: 2,
 		// Start task as paused
 		IsPaused:       false,
@@ -604,22 +543,10 @@ func TestBadChildrenOutput(t *testing.T) {
 		ProgressWeight: 1,
 		ParentIds:      []string{"CX"},
 	}
-
-	group := TaskGroup{
-		Id:            "G1",
-		Name:          "Test",
-		IsPaused:      false,
-		CreatedAt:     time.Now(),
-		TaskOperators: make(map[string]*TaskOperator),
-		TaskUpdates:   make(chan TaskUpdateEvent, 8),
-	}
+	group := NewTaskGroup("G6", "Test")
 
 	if len(group.TaskOperators) != 0 {
 		t.Errorf("len(group.TaskOperators) = %d; want 0", len(group.TaskOperators))
-	}
-
-	urlGen := func(task *Task) (url string, err error) {
-		return "https://example.com/test", nil
 	}
 
 	var wgParent sync.WaitGroup
@@ -641,8 +568,7 @@ func TestBadChildrenOutput(t *testing.T) {
 		"children": "How they grow...",
 	}
 	client.Children = []*Task{&child1, &child2}
-
-	group.Prepare([]*Task{&parent}, urlGen, &client)
+	group.PreloadTasks([]*Task{&parent}, &client)
 	group.Operate()
 
 	// Wait for task to complete

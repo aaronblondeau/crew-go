@@ -14,7 +14,7 @@ type WorkerResponse struct {
 }
 
 type TaskClient interface {
-	Post(URL string, task *Task, taskGroup *TaskGroup) (response WorkerResponse, err error)
+	Post(task *Task, taskGroup *TaskGroup) (response WorkerResponse, err error)
 }
 
 // A Task represents a unit of work that can be completed by a worker.
@@ -60,7 +60,8 @@ type TaskOperator struct {
 	Client               TaskClient
 }
 
-func NewTaskOperator(task *Task, taskGroup *TaskGroup, client TaskClient) *TaskOperator {
+func NewTaskOperator(task *Task, taskGroup *TaskGroup) *TaskOperator {
+	// client := NewHttpPostClient()
 	t := TaskOperator{
 		Task:                 task,
 		TaskGroup:            taskGroup,
@@ -71,7 +72,7 @@ func NewTaskOperator(task *Task, taskGroup *TaskGroup, client TaskClient) *TaskO
 		ParentCompleteEvents: make(chan *Task, len(task.Children)),
 		Executing:            make(chan bool),
 		Terminated:           make(chan bool),
-		Client:               client,
+		//Client:               client,
 	}
 	// Don't let initial timer run
 	t.CancelExecute()
@@ -241,11 +242,7 @@ func (operator *TaskOperator) Execute() {
 		default:
 		}
 
-		// TODO - should we try and do something with error here?
-		url, _ := operator.TaskGroup.urlForTask(operator.Task)
-		fmt.Println("Timer fired!  Sending to client:", url, operator.Task.Id)
-
-		workerResponse, err := operator.Client.Post(url, operator.Task, operator.TaskGroup)
+		workerResponse, err := operator.Client.Post(operator.Task, operator.TaskGroup)
 
 		// decrement attempts
 		operator.Task.RemainingAttempts--
@@ -422,12 +419,6 @@ func (task *Task) CanExecute(taskGroup *TaskGroup) bool {
 		if !parent.IsComplete {
 			return false
 		}
-	}
-
-	// Cannot execute if no url
-	_, urlError := taskGroup.urlForTask(task)
-	if urlError != nil {
-		return false
 	}
 
 	return true
