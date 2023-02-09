@@ -39,9 +39,9 @@ func NewTaskGroup(id string, name string) *TaskGroup {
 	return &tg
 }
 
-// Prepare adds the given tasks to the group, wrapping each with an operator.
+// PreloadTasks adds the given tasks to the group, wrapping each with an operator.
 // This method also populates Task.Children from other Task.ParentIds within
-// the group.
+// the group. Use this before calling Operate on a task group.
 func (taskGroup *TaskGroup) PreloadTasks(tasks []*Task, client TaskClient) {
 	// Key = parentId
 	// Value = child tasks
@@ -72,6 +72,9 @@ func (taskGroup *TaskGroup) PreloadTasks(tasks []*Task, client TaskClient) {
 	}
 }
 
+// AddTask adds the given task to the group, wrapping each it an operator, and calling operate.
+// This method updates parent and child relationships within the group.
+// Use this after calling Operate on a task group.
 func (taskGroup *TaskGroup) AddTask(task *Task, client TaskClient) error {
 	// Make sure task doesn't already exist
 	for _, op := range taskGroup.TaskOperators {
@@ -118,6 +121,8 @@ func (taskGroup *TaskGroup) AddTask(task *Task, client TaskClient) error {
 	return nil
 }
 
+// DeleteTask removes task with the given id from the group.
+// This method updates parent and child relationships within the group.
 func (taskGroup *TaskGroup) DeleteTask(id string) error {
 	// Find the task
 	operator, found := taskGroup.TaskOperators[id]

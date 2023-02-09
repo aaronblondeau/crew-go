@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 )
 
 type PostInvocationCountClient struct {
@@ -25,8 +26,10 @@ func (client *PostInvocationCountClient) Post(task *Task, taskGroup *TaskGroup) 
 }
 
 type PostReturnsChildrenClient struct {
-	Children []*Task
-	Output   interface{}
+	Children                []*Task
+	Output                  interface{}
+	WorkgroupDelayInSeconds int
+	ChildrenDelayInSeconds  int
 }
 
 func (client *PostReturnsChildrenClient) Post(task *Task, taskGroup *TaskGroup) (response WorkerResponse, err error) {
@@ -40,8 +43,8 @@ func (client *PostReturnsChildrenClient) Post(task *Task, taskGroup *TaskGroup) 
 		Output:                  client.Output,
 		Children:                children,
 		Error:                   nil,
-		WorkgroupDelayInSeconds: 0,
-		ChildrenDelayInSeconds:  0,
+		WorkgroupDelayInSeconds: client.WorkgroupDelayInSeconds,
+		ChildrenDelayInSeconds:  client.ChildrenDelayInSeconds,
 	}
 	return
 }
@@ -591,4 +594,222 @@ func TestBadChildrenOutput(t *testing.T) {
 	}
 
 	group.Shutdown()
+}
+
+func TestWorkgroupDelayInSecondsOutput(t *testing.T) {
+	parent := Task{
+		Id:                "T14P",
+		TaskGroupId:       "G14",
+		Name:              "Parent",
+		Worker:            "test",
+		Workgroup:         "T14Delay",
+		Key:               "T14P",
+		RemainingAttempts: 2,
+		// Start task as paused
+		IsPaused:       false,
+		IsComplete:     false,
+		Priority:       1,
+		ProgressWeight: 1,
+		ParentIds:      []string{},
+	}
+
+	child := Task{
+		Id:                "T14C",
+		TaskGroupId:       "G14",
+		Name:              "Child",
+		Worker:            "test",
+		Workgroup:         "T14Delay",
+		Key:               "T14C",
+		RemainingAttempts: 2,
+		// Start task as paused
+		IsPaused:       false,
+		IsComplete:     false,
+		Priority:       1,
+		ProgressWeight: 1,
+		ParentIds:      []string{},
+	}
+
+	group := NewTaskGroup("G14", "Test")
+
+	if len(group.TaskOperators) != 0 {
+		t.Errorf("len(group.TaskOperators) = %d; want 0", len(group.TaskOperators))
+	}
+
+	var wgParent sync.WaitGroup
+	wgParent.Add(1)
+	var wgChildUpdate sync.WaitGroup
+	wgChildUpdate.Add(1)
+	var wgChild sync.WaitGroup
+	wgChild.Add(1)
+	go func() {
+		triggerChildUpdate := true
+		for event := range group.TaskUpdates {
+			fmt.Println("Got an update!", event.Event, event.Task.Id, event.Task.IsComplete)
+			if event.Task.Id == parent.Id {
+				if event.Task.IsComplete {
+					wgParent.Done()
+				}
+			}
+			if event.Task.Id == child.Id {
+				if event.Task.IsComplete {
+					wgChild.Done()
+					return
+				} else {
+					if triggerChildUpdate && !event.Task.RunAfter.IsZero() {
+						wgChildUpdate.Done()
+						triggerChildUpdate = false
+					}
+				}
+			}
+		}
+	}()
+
+	client := PostReturnsChildrenClient{}
+	client.Output = map[string]interface{}{
+		"children": "How they grow...",
+	}
+	client.WorkgroupDelayInSeconds = 5
+	client.Children = []*Task{&child}
+	group.PreloadTasks([]*Task{&parent}, &client)
+	group.Operate()
+
+	// Wait for task to complete
+	wgParent.Wait()
+	now := time.Now()
+	if parent.IsComplete != true {
+		t.Fatalf(`parent.IsComplete = %v, want true`, parent.IsComplete)
+	}
+	if len(parent.Children) != 1 {
+		t.Fatalf(`len(parent.Children) = %v, want 1`, len(parent.Children))
+	}
+
+	// Wait for child to get updated (runAfter update)
+	wgChildUpdate.Wait()
+	// Make sure child has RunAfter in future
+	threshold := now.Add(3 * time.Second)
+	if !child.RunAfter.After(threshold) {
+		t.Fatalf(`child.RunAfter = %v, should be after %v`, child.RunAfter, threshold)
+	}
+
+	// Wait for child to complete
+	wgChild.Wait()
+	if child.IsComplete != true {
+		t.Fatalf(`child.IsComplete = %v, want true`, child.IsComplete)
+	}
+
+	// It should have taken more than 5 seconds for child to complete
+	now2 := time.Now()
+	nowDiff := now2.Sub(now).Seconds()
+	if nowDiff < 5 {
+		t.Fatalf(`nowDiff = %v, want 5`, nowDiff)
+	}
+}
+
+func TestChildrenDelayInSecondsSecondsOutput(t *testing.T) {
+	parent := Task{
+		Id:                "T15P",
+		TaskGroupId:       "G15",
+		Name:              "Parent",
+		Worker:            "test",
+		Workgroup:         "T15Delay",
+		Key:               "T15P",
+		RemainingAttempts: 2,
+		// Start task as paused
+		IsPaused:       false,
+		IsComplete:     false,
+		Priority:       1,
+		ProgressWeight: 1,
+		ParentIds:      []string{},
+	}
+
+	child := Task{
+		Id:                "T15C",
+		TaskGroupId:       "G15",
+		Name:              "Child",
+		Worker:            "test",
+		Workgroup:         "T15Delay",
+		Key:               "T15C",
+		RemainingAttempts: 2,
+		// Start task as paused
+		IsPaused:       false,
+		IsComplete:     false,
+		Priority:       1,
+		ProgressWeight: 1,
+		ParentIds:      []string{},
+	}
+
+	group := NewTaskGroup("G15", "Test")
+
+	if len(group.TaskOperators) != 0 {
+		t.Errorf("len(group.TaskOperators) = %d; want 0", len(group.TaskOperators))
+	}
+
+	var wgParent sync.WaitGroup
+	wgParent.Add(1)
+	var wgChildUpdate sync.WaitGroup
+	wgChildUpdate.Add(1)
+	var wgChild sync.WaitGroup
+	wgChild.Add(1)
+	go func() {
+		triggerChildUpdate := true
+		for event := range group.TaskUpdates {
+			fmt.Println("Got an update!", event.Event, event.Task.Id, event.Task.IsComplete)
+			if event.Task.Id == parent.Id {
+				if event.Task.IsComplete {
+					wgParent.Done()
+				}
+			}
+			if event.Task.Id == child.Id {
+				if event.Task.IsComplete {
+					wgChild.Done()
+					return
+				} else {
+					if triggerChildUpdate && !event.Task.RunAfter.IsZero() {
+						wgChildUpdate.Done()
+						triggerChildUpdate = false
+					}
+				}
+			}
+		}
+	}()
+
+	client := PostReturnsChildrenClient{}
+	client.Output = map[string]interface{}{
+		"children": "How they grow...",
+	}
+	client.ChildrenDelayInSeconds = 5
+	client.Children = []*Task{&child}
+	group.PreloadTasks([]*Task{&parent}, &client)
+	group.Operate()
+
+	// Wait for task to complete
+	wgParent.Wait()
+	now := time.Now()
+	if parent.IsComplete != true {
+		t.Fatalf(`parent.IsComplete = %v, want true`, parent.IsComplete)
+	}
+	if len(parent.Children) != 1 {
+		t.Fatalf(`len(parent.Children) = %v, want 1`, len(parent.Children))
+	}
+
+	// Wait for child to get updated (runAfter update)
+	wgChildUpdate.Wait()
+	// Make sure child has RunAfter in future
+	threshold := now.Add(3 * time.Second)
+	if !child.RunAfter.After(threshold) {
+		t.Fatalf(`child.RunAfter = %v, should be after %v`, child.RunAfter, threshold)
+	}
+
+	// Wait for child to complete
+	wgChild.Wait()
+	if child.IsComplete != true {
+		t.Fatalf(`child.IsComplete = %v, want true`, child.IsComplete)
+	}
+
+	// It should have taken more than 5 seconds for child to complete
+	now2 := time.Now()
+	nowDiff := now2.Sub(now).Seconds()
+	if nowDiff < 5 {
+		t.Fatalf(`nowDiff = %v, want 5`, nowDiff)
+	}
 }
