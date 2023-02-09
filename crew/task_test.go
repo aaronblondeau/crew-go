@@ -8,12 +8,16 @@ import (
 
 type TaskTestClient struct{}
 
-func (client TaskTestClient) Post(URL string, task *Task) (output interface{}, children []*Task, err error) {
-	output = map[string]interface{}{
-		"demo": "Test Complete",
+func (client TaskTestClient) Post(URL string, task *Task, taskGroup *TaskGroup) (response WorkerResponse, err error) {
+	response = WorkerResponse{
+		Output: map[string]interface{}{
+			"demo": "Test Complete",
+		},
+		Children:                make([]*Task, 0),
+		Error:                   nil,
+		WorkgroupDelayInSeconds: 0,
+		ChildrenDelayInSeconds:  0,
 	}
-	children = make([]*Task, 0)
-	err = nil
 	return
 }
 
@@ -22,7 +26,7 @@ func TestCanExecute(t *testing.T) {
 		Id:                "T1",
 		TaskGroupId:       "G1",
 		Name:              "Task One",
-		WorkerId:          "worker-a",
+		Worker:            "worker-a",
 		Workgroup:         "",
 		Key:               "T1",
 		RemainingAttempts: 5,
@@ -40,14 +44,11 @@ func TestCanExecute(t *testing.T) {
 		TaskUpdates:   make(chan TaskUpdateEvent, 8),
 	}
 
-	testWorker := Worker{
-		Id:  "worker-a",
-		Url: "https://example.com/test",
+	urlGen := func(task *Task) (url string, err error) {
+		return "https://example.com/test", nil
 	}
-	workers := make(map[string]Worker)
-	workers[testWorker.Id] = testWorker
 
-	group.Prepare([]*Task{}, workers, &TaskTestClient{})
+	group.Prepare([]*Task{}, urlGen, &TaskTestClient{})
 
 	canExecute := task.CanExecute(&group)
 	if !canExecute {
@@ -60,7 +61,7 @@ func TestCannotExecuteIfTaskIsPaused(t *testing.T) {
 		Id:                "T1",
 		TaskGroupId:       "G1",
 		Name:              "Task One",
-		WorkerId:          "worker-a",
+		Worker:            "worker-a",
 		Workgroup:         "",
 		Key:               "T1",
 		RemainingAttempts: 5,
@@ -97,7 +98,7 @@ func TestCannotExecuteIfParentsIncomplete(t *testing.T) {
 		Id:                "T1",
 		TaskGroupId:       "G1",
 		Name:              "Incomplete Task Parent",
-		WorkerId:          "test",
+		Worker:            "test",
 		Workgroup:         "",
 		Key:               "T1",
 		RemainingAttempts: 5,
@@ -111,7 +112,7 @@ func TestCannotExecuteIfParentsIncomplete(t *testing.T) {
 		Id:                "T2",
 		TaskGroupId:       "G1",
 		Name:              "Task One",
-		WorkerId:          "test",
+		Worker:            "test",
 		Workgroup:         "",
 		Key:               "T1",
 		RemainingAttempts: 5,
@@ -131,14 +132,11 @@ func TestCannotExecuteIfParentsIncomplete(t *testing.T) {
 		TaskUpdates:   make(chan TaskUpdateEvent, 8),
 	}
 
-	testWorker := Worker{
-		Id:  "test",
-		Url: "https://example.com/test",
+	urlGen := func(task *Task) (url string, err error) {
+		return "https://example.com/test", nil
 	}
-	workers := make(map[string]Worker)
-	workers[testWorker.Id] = testWorker
 
-	group.Prepare([]*Task{&parent, &task}, workers, &TaskTestClient{})
+	group.Prepare([]*Task{&parent, &task}, urlGen, &TaskTestClient{})
 
 	canExecute := task.CanExecute(&group)
 	if canExecute {
@@ -151,7 +149,7 @@ func TestCanUpdateTask(t *testing.T) {
 		Id:                "T2",
 		TaskGroupId:       "G1",
 		Name:              "Task One",
-		WorkerId:          "test",
+		Worker:            "test",
 		Workgroup:         "",
 		Key:               "T1",
 		RemainingAttempts: 5,
@@ -171,7 +169,11 @@ func TestCanUpdateTask(t *testing.T) {
 		TaskUpdates:   make(chan TaskUpdateEvent, 8),
 	}
 
-	group.Prepare([]*Task{&task}, make(map[string]Worker), &TaskTestClient{})
+	urlGen := func(task *Task) (url string, err error) {
+		return "https://example.com/test", nil
+	}
+
+	group.Prepare([]*Task{&task}, urlGen, &TaskTestClient{})
 	group.Operate()
 
 	// This test needs to wait for a TaskUpdate event to know when the task has been updated

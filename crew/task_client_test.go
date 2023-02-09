@@ -1,7 +1,6 @@
 package crew
 
 import (
-	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -12,13 +11,17 @@ type PostInvocationCountClient struct {
 	PostInvocationCount int
 }
 
-func (client *PostInvocationCountClient) Post(URL string, task *Task) (output interface{}, children []*Task, err error) {
-	output = map[string]interface{}{
-		"test": "Hook Complete",
-	}
-	children = make([]*Task, 0)
-	err = nil
+func (client *PostInvocationCountClient) Post(URL string, task *Task, taskGroup *TaskGroup) (response WorkerResponse, err error) {
 	client.PostInvocationCount++
+	response = WorkerResponse{
+		Output: map[string]interface{}{
+			"test": "Hook Complete",
+		},
+		Children:                make([]*Task, 0),
+		Error:                   nil,
+		WorkgroupDelayInSeconds: 0,
+		ChildrenDelayInSeconds:  0,
+	}
 	return
 }
 
@@ -27,14 +30,20 @@ type PostReturnsChildrenClient struct {
 	Output   interface{}
 }
 
-func (client *PostReturnsChildrenClient) Post(URL string, task *Task) (output interface{}, children []*Task, err error) {
-	output = client.Output
+func (client *PostReturnsChildrenClient) Post(URL string, task *Task, taskGroup *TaskGroup) (response WorkerResponse, err error) {
+	var children []*Task
 	if task.Name == "Parent" {
 		children = client.Children
 	} else {
 		children = make([]*Task, 0)
 	}
-	err = nil
+	response = WorkerResponse{
+		Output:                  client.Output,
+		Children:                children,
+		Error:                   nil,
+		WorkgroupDelayInSeconds: 0,
+		ChildrenDelayInSeconds:  0,
+	}
 	return
 }
 
@@ -43,10 +52,14 @@ type PostErrorClient struct {
 	Output       interface{}
 }
 
-func (client *PostErrorClient) Post(URL string, task *Task) (output interface{}, children []*Task, err error) {
-	output = client.Output
-	err = errors.New(client.ErrorMessage)
-	children = make([]*Task, 0)
+func (client *PostErrorClient) Post(URL string, task *Task, taskGroup *TaskGroup) (response WorkerResponse, err error) {
+	response = WorkerResponse{
+		Output:                  client.Output,
+		Children:                make([]*Task, 0),
+		Error:                   client.ErrorMessage,
+		WorkgroupDelayInSeconds: 0,
+		ChildrenDelayInSeconds:  0,
+	}
 	return
 }
 
@@ -56,15 +69,24 @@ type FailOnceThenSucceedClient struct {
 	Output              interface{}
 }
 
-func (client *FailOnceThenSucceedClient) Post(URL string, task *Task) (output interface{}, children []*Task, err error) {
-	output = client.Output
-	children = make([]*Task, 0)
+func (client *FailOnceThenSucceedClient) Post(URL string, task *Task, taskGroup *TaskGroup) (response WorkerResponse, err error) {
+	var workerError interface{}
 	if client.PostInvocationCount == 0 {
-		err = errors.New(client.ErrorMessage)
+		workerError = client.ErrorMessage
 	} else {
-		err = nil
+		workerError = nil
 	}
+
 	client.PostInvocationCount++
+
+	response = WorkerResponse{
+		Output:                  client.Output,
+		Children:                make([]*Task, 0),
+		Error:                   workerError,
+		WorkgroupDelayInSeconds: 0,
+		ChildrenDelayInSeconds:  0,
+	}
+
 	return
 }
 
@@ -73,7 +95,7 @@ func TestTaskInvokesClientPost(t *testing.T) {
 		Id:                "T2",
 		TaskGroupId:       "G1",
 		Name:              "Task One",
-		WorkerId:          "test",
+		Worker:            "test",
 		Workgroup:         "",
 		Key:               "T1",
 		RemainingAttempts: 5,
@@ -98,12 +120,9 @@ func TestTaskInvokesClientPost(t *testing.T) {
 		t.Errorf("len(group.TaskOperators) = %d; want 0", len(group.TaskOperators))
 	}
 
-	testWorker := Worker{
-		Id:  "test",
-		Url: "https://example.com/test",
+	urlGen := func(task *Task) (url string, err error) {
+		return "https://example.com/test", nil
 	}
-	workers := make(map[string]Worker)
-	workers[testWorker.Id] = testWorker
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -118,7 +137,7 @@ func TestTaskInvokesClientPost(t *testing.T) {
 	}()
 
 	client := PostInvocationCountClient{}
-	group.Prepare([]*Task{&task}, workers, &client)
+	group.Prepare([]*Task{&task}, urlGen, &client)
 	group.Operate()
 
 	// Wait for task to complete
@@ -141,7 +160,7 @@ func TestCaptureError(t *testing.T) {
 		Id:                "T2",
 		TaskGroupId:       "G1",
 		Name:              "Task One",
-		WorkerId:          "test",
+		Worker:            "test",
 		Workgroup:         "",
 		Key:               "T1",
 		RemainingAttempts: 1,
@@ -166,12 +185,9 @@ func TestCaptureError(t *testing.T) {
 		t.Errorf("len(group.TaskOperators) = %d; want 0", len(group.TaskOperators))
 	}
 
-	testWorker := Worker{
-		Id:  "test",
-		Url: "https://example.com/test",
+	urlGen := func(task *Task) (url string, err error) {
+		return "https://example.com/test", nil
 	}
-	workers := make(map[string]Worker)
-	workers[testWorker.Id] = testWorker
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -187,7 +203,7 @@ func TestCaptureError(t *testing.T) {
 
 	client := PostErrorClient{}
 	client.ErrorMessage = "Oops, I died"
-	group.Prepare([]*Task{&task}, workers, &client)
+	group.Prepare([]*Task{&task}, urlGen, &client)
 	group.Operate()
 
 	// Wait for task to complete
@@ -210,7 +226,7 @@ func TestErrorOnceThenSucceed(t *testing.T) {
 		Id:                "T2",
 		TaskGroupId:       "G1",
 		Name:              "Task One",
-		WorkerId:          "test",
+		Worker:            "test",
 		Workgroup:         "",
 		Key:               "T1",
 		RemainingAttempts: 2,
@@ -236,12 +252,9 @@ func TestErrorOnceThenSucceed(t *testing.T) {
 		t.Errorf("len(group.TaskOperators) = %d; want 0", len(group.TaskOperators))
 	}
 
-	testWorker := Worker{
-		Id:  "test",
-		Url: "https://example.com/test",
+	urlGen := func(task *Task) (url string, err error) {
+		return "https://example.com/test", nil
 	}
-	workers := make(map[string]Worker)
-	workers[testWorker.Id] = testWorker
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -257,7 +270,7 @@ func TestErrorOnceThenSucceed(t *testing.T) {
 
 	client := FailOnceThenSucceedClient{}
 	client.ErrorMessage = "Oops, I goofed"
-	group.Prepare([]*Task{&task}, workers, &client)
+	group.Prepare([]*Task{&task}, urlGen, &client)
 	group.Operate()
 
 	// Wait for task to complete
@@ -280,7 +293,7 @@ func TestSingleChildOutput(t *testing.T) {
 		Id:                "P1",
 		TaskGroupId:       "G1",
 		Name:              "Parent",
-		WorkerId:          "test",
+		Worker:            "test",
 		Workgroup:         "",
 		Key:               "T1",
 		RemainingAttempts: 2,
@@ -296,7 +309,7 @@ func TestSingleChildOutput(t *testing.T) {
 		Id:                "C1",
 		TaskGroupId:       "G1",
 		Name:              "Child",
-		WorkerId:          "test",
+		Worker:            "test",
 		Workgroup:         "",
 		Key:               "C1",
 		RemainingAttempts: 2,
@@ -321,12 +334,9 @@ func TestSingleChildOutput(t *testing.T) {
 		t.Errorf("len(group.TaskOperators) = %d; want 0", len(group.TaskOperators))
 	}
 
-	testWorker := Worker{
-		Id:  "test",
-		Url: "https://example.com/test",
+	urlGen := func(task *Task) (url string, err error) {
+		return "https://example.com/test", nil
 	}
-	workers := make(map[string]Worker)
-	workers[testWorker.Id] = testWorker
 
 	var wgParent sync.WaitGroup
 	wgParent.Add(1)
@@ -355,7 +365,7 @@ func TestSingleChildOutput(t *testing.T) {
 	}
 	client.Children = []*Task{&child}
 
-	group.Prepare([]*Task{&parent}, workers, &client)
+	group.Prepare([]*Task{&parent}, urlGen, &client)
 	group.Operate()
 
 	// Wait for task to complete
@@ -379,7 +389,7 @@ func TestMultipleChildOutput(t *testing.T) {
 		Id:                "P1",
 		TaskGroupId:       "G1",
 		Name:              "Parent",
-		WorkerId:          "test",
+		Worker:            "test",
 		Workgroup:         "",
 		Key:               "T1",
 		RemainingAttempts: 2,
@@ -395,7 +405,7 @@ func TestMultipleChildOutput(t *testing.T) {
 		Id:                "C1",
 		TaskGroupId:       "G1",
 		Name:              "Child",
-		WorkerId:          "test",
+		Worker:            "test",
 		Workgroup:         "",
 		Key:               "C1",
 		RemainingAttempts: 2,
@@ -411,7 +421,7 @@ func TestMultipleChildOutput(t *testing.T) {
 		Id:                "C2A",
 		TaskGroupId:       "G1",
 		Name:              "Child",
-		WorkerId:          "test",
+		Worker:            "test",
 		Workgroup:         "",
 		Key:               "C2A",
 		RemainingAttempts: 2,
@@ -427,7 +437,7 @@ func TestMultipleChildOutput(t *testing.T) {
 		Id:                "C2B",
 		TaskGroupId:       "G1",
 		Name:              "Child",
-		WorkerId:          "test",
+		Worker:            "test",
 		Workgroup:         "",
 		Key:               "C2B",
 		RemainingAttempts: 2,
@@ -443,7 +453,7 @@ func TestMultipleChildOutput(t *testing.T) {
 		Id:                "C3",
 		TaskGroupId:       "G1",
 		Name:              "Child",
-		WorkerId:          "test",
+		Worker:            "test",
 		Workgroup:         "",
 		Key:               "C3",
 		RemainingAttempts: 2,
@@ -468,12 +478,9 @@ func TestMultipleChildOutput(t *testing.T) {
 		t.Errorf("len(group.TaskOperators) = %d; want 0", len(group.TaskOperators))
 	}
 
-	testWorker := Worker{
-		Id:  "test",
-		Url: "https://example.com/test",
+	urlGen := func(task *Task) (url string, err error) {
+		return "https://example.com/test", nil
 	}
-	workers := make(map[string]Worker)
-	workers[testWorker.Id] = testWorker
 
 	var wgParent sync.WaitGroup
 	wgParent.Add(1)
@@ -507,7 +514,7 @@ func TestMultipleChildOutput(t *testing.T) {
 	}
 	client.Children = []*Task{&child1, &child2A, &child2B, &child3}
 
-	group.Prepare([]*Task{&parent}, workers, &client)
+	group.Prepare([]*Task{&parent}, urlGen, &client)
 	group.Operate()
 
 	// Wait for task to complete
@@ -554,7 +561,7 @@ func TestBadChildrenOutput(t *testing.T) {
 		Id:                "P1",
 		TaskGroupId:       "G1",
 		Name:              "Parent",
-		WorkerId:          "test",
+		Worker:            "test",
 		Workgroup:         "",
 		Key:               "T1",
 		RemainingAttempts: 2,
@@ -570,7 +577,7 @@ func TestBadChildrenOutput(t *testing.T) {
 		Id:                "C1",
 		TaskGroupId:       "G1",
 		Name:              "Child",
-		WorkerId:          "test",
+		Worker:            "test",
 		Workgroup:         "",
 		Key:               "C1",
 		RemainingAttempts: 2,
@@ -586,7 +593,7 @@ func TestBadChildrenOutput(t *testing.T) {
 		Id:                "C1",
 		TaskGroupId:       "G1",
 		Name:              "Child",
-		WorkerId:          "test",
+		Worker:            "test",
 		Workgroup:         "",
 		Key:               "C1",
 		RemainingAttempts: 2,
@@ -611,12 +618,9 @@ func TestBadChildrenOutput(t *testing.T) {
 		t.Errorf("len(group.TaskOperators) = %d; want 0", len(group.TaskOperators))
 	}
 
-	testWorker := Worker{
-		Id:  "test",
-		Url: "https://example.com/test",
+	urlGen := func(task *Task) (url string, err error) {
+		return "https://example.com/test", nil
 	}
-	workers := make(map[string]Worker)
-	workers[testWorker.Id] = testWorker
 
 	var wgParent sync.WaitGroup
 	wgParent.Add(1)
@@ -638,7 +642,7 @@ func TestBadChildrenOutput(t *testing.T) {
 	}
 	client.Children = []*Task{&child1, &child2}
 
-	group.Prepare([]*Task{&parent}, workers, &client)
+	group.Prepare([]*Task{&parent}, urlGen, &client)
 	group.Operate()
 
 	// Wait for task to complete

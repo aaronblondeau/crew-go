@@ -5,8 +5,16 @@ import (
 	"time"
 )
 
+type WorkerResponse struct {
+	Output                  interface{} `json:"output"`
+	Children                []*Task     `json:"children"`
+	WorkgroupDelayInSeconds int         `json:"workgroupDelayInSeconds"`
+	ChildrenDelayInSeconds  int         `json:"childrenDelayInSeconds"`
+	Error                   interface{} `json:"error"`
+}
+
 type TaskClient interface {
-	Post(URL string, task *Task) (output interface{}, children []*Task, err error) // output, children, error
+	Post(URL string, task *Task, taskGroup *TaskGroup) (response WorkerResponse, err error)
 }
 
 // A Task represents a unit of work that can be completed by a worker.
@@ -14,7 +22,7 @@ type Task struct {
 	Id                  string        `json:"id"`
 	TaskGroupId         string        `json:"taskGroupId"`
 	Name                string        `json:"name"`
-	WorkerId            string        `json:"workerId"`
+	Worker              string        `json:"worker"`
 	Workgroup           string        `json:"workgroup"`
 	Key                 string        `json:"key"`
 	RemainingAttempts   int           `json:"remainingAttempts"`
@@ -50,10 +58,9 @@ type TaskOperator struct {
 	Executing            chan bool
 	Terminated           chan bool
 	Client               TaskClient
-	WorkerAvailable      chan struct{}
 }
 
-func NewTaskOperator(task *Task, taskGroup *TaskGroup, workers map[string]Worker, client TaskClient) *TaskOperator {
+func NewTaskOperator(task *Task, taskGroup *TaskGroup, client TaskClient) *TaskOperator {
 	t := TaskOperator{
 		Task:                 task,
 		TaskGroup:            taskGroup,
@@ -65,7 +72,6 @@ func NewTaskOperator(task *Task, taskGroup *TaskGroup, workers map[string]Worker
 		Executing:            make(chan bool),
 		Terminated:           make(chan bool),
 		Client:               client,
-		WorkerAvailable:      make(chan struct{}),
 	}
 	// Don't let initial timer run
 	t.CancelExecute()
@@ -97,9 +103,6 @@ func (operator *TaskOperator) Operate() {
 			case <-operator.EvaulateTimer.C:
 				operator.Execute()
 
-			case <-operator.WorkerAvailable:
-				operator.Evaluate()
-
 			case update := <-operator.ExternalUpdates:
 				newName, hasNewName := update["name"].(string)
 				if hasNewName {
@@ -109,6 +112,11 @@ func (operator *TaskOperator) Operate() {
 				newIsPaused, hasIsPaused := update["isPaused"].(bool)
 				if hasIsPaused {
 					operator.Task.IsPaused = newIsPaused
+				}
+
+				newRunAfter, hasRunAfter := update["runAfter"].(time.Time)
+				if hasRunAfter {
+					operator.Task.RunAfter = newRunAfter
 				}
 
 				// TODO - persist the change
@@ -233,17 +241,20 @@ func (operator *TaskOperator) Execute() {
 		default:
 		}
 
-		worker := operator.TaskGroup.Workers[operator.Task.WorkerId]
-		fmt.Println("Timer fired!  Sending to client:", worker.Url, operator.Task.Id)
+		// TODO - should we try and do something with error here?
+		url, _ := operator.TaskGroup.urlForTask(operator.Task)
+		fmt.Println("Timer fired!  Sending to client:", url, operator.Task.Id)
 
-		output, children, err := operator.Client.Post(worker.Url, operator.Task)
+		workerResponse, err := operator.Client.Post(url, operator.Task, operator.TaskGroup)
 
 		// decrement attempts
 		operator.Task.RemainingAttempts--
 
 		// capture output
-		operator.Task.Output = output
+		operator.Task.Output = workerResponse.Output
 
+		// Error can come from two places : 1) Processing response from worker, a normal go error 2) An error in the response from the worker
+		// These first two conditions look for each possibility
 		if err != nil {
 			// Capture Error
 			operator.Task.Errors = append(operator.Task.Errors, err)
@@ -252,19 +263,27 @@ func (operator *TaskOperator) Execute() {
 			if operator.Task.RemainingAttempts > 0 {
 				operator.EvaulateTimer.Reset(time.Duration(operator.Task.ErrorDelayInSeconds * int(time.Second)))
 			}
+		} else if workerResponse.Error != nil {
+			// Capture Error
+			operator.Task.Errors = append(operator.Task.Errors, workerResponse.Error)
+
+			// Setup another evaluation after error delay
+			if operator.Task.RemainingAttempts > 0 {
+				operator.EvaulateTimer.Reset(time.Duration(operator.Task.ErrorDelayInSeconds * int(time.Second)))
+			}
 		} else {
 			childrenOk := true
 			// Create child tasks
-			if len(children) > 0 {
+			if len(workerResponse.Children) > 0 {
 				// Children have to be created in order so that parents exist before children exist
 				// TaskGroup's AddTask throws an error if a task's parents aren't found
 				// We can use that here by iteratively trying to create children till they're all done
 				// If we get stuck then something is wrong with structure of children and we should record an error
 				createdChildren := 0
 				lastCreatedChildren := 0
-				expectedChildren := len(children)
+				expectedChildren := len(workerResponse.Children)
 				for createdChildren < expectedChildren {
-					for _, child := range children {
+					for _, child := range workerResponse.Children {
 						// If worker didn't specify that current task is parent of the children, add current task as a parent
 						currentTaskIsParent := false
 						for _, parentId := range child.ParentIds {
@@ -285,10 +304,10 @@ func (operator *TaskOperator) Execute() {
 					}
 					// If number of createdChildren didn't change on a pass (and we're not done) then we have a corrupt parent/child structure in children
 					if createdChildren != lastCreatedChildren {
-						if createdChildren < len(children) {
+						if createdChildren < len(workerResponse.Children) {
 							// Something went wrong creating the children
 							// Un-create children from above so we don't leave a half baked structure
-							for _, child := range children {
+							for _, child := range workerResponse.Children {
 								operator.TaskGroup.DeleteTask(child.Id)
 							}
 							childrenOk = false
@@ -306,7 +325,7 @@ func (operator *TaskOperator) Execute() {
 					for _, keySiblingOperator := range operator.TaskGroup.TaskOperators {
 						if (keySiblingOperator.Task.Key == operator.Task.Key) && (keySiblingOperator.Task.Id != operator.Task.Id) {
 							keySiblingOperator.Task.IsComplete = true
-							keySiblingOperator.Task.Output = output
+							keySiblingOperator.Task.Output = workerResponse.Output
 
 							// TODO - persist keySiblingOperator.Task
 
@@ -329,6 +348,32 @@ func (operator *TaskOperator) Execute() {
 				// Children not ok
 				operator.Task.IsComplete = false
 				operator.Task.Errors = append(operator.Task.Errors, "Unable to create children - corrupt parent/child relationship.")
+			}
+		}
+
+		if workerResponse.WorkgroupDelayInSeconds > 0 && operator.Task.Workgroup != "" {
+			for _, neighbor := range operator.TaskGroup.TaskOperators {
+				if neighbor.Task.Workgroup == operator.Task.Workgroup && !neighbor.Task.IsComplete {
+					// Update runAfter for neighbor
+					neighbor.ExternalUpdates <- map[string]interface{}{
+						"runAfter": time.Now().Add(time.Duration(workerResponse.WorkgroupDelayInSeconds) * time.Second),
+					}
+				}
+			}
+		}
+
+		if workerResponse.ChildrenDelayInSeconds > 0 {
+			// Note, this is not done above as some tasks may have children that were pre-populated
+			for _, child := range operator.Task.Children {
+				if !child.IsComplete {
+					childOp, found := operator.TaskGroup.TaskOperators[child.Id]
+					if found {
+						// Update runAfter for child
+						childOp.ExternalUpdates <- map[string]interface{}{
+							"runAfter": time.Now().Add(time.Duration(workerResponse.ChildrenDelayInSeconds) * time.Second),
+						}
+					}
+				}
 			}
 		}
 
@@ -379,10 +424,10 @@ func (task *Task) CanExecute(taskGroup *TaskGroup) bool {
 		}
 	}
 
-	// Cannot execute if no channel
-	_, found := taskGroup.Workers[task.WorkerId]
-	if !found {
-		return found
+	// Cannot execute if no url
+	_, urlError := taskGroup.urlForTask(task)
+	if urlError != nil {
+		return false
 	}
 
 	return true

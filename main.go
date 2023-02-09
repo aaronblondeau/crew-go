@@ -8,28 +8,10 @@ import (
 	"github.com/crew-go/crew"
 )
 
-type DemoClient struct{}
-
-func (client DemoClient) Post(URL string, task *crew.Task) (output interface{}, children []*crew.Task, err error) {
-	// Pretend sleep for http call
-	fmt.Println("I'm about to send it!")
-	time.Sleep(2 * time.Second)
-	fmt.Println("Yeah, sure I sent that http call...")
-	output = map[string]interface{}{
-		"demo": "Demo Complete",
-	}
-	children = make([]*crew.Task, 0)
-	err = nil
-	return
-}
-
 func main() {
-	devWorker := crew.Worker{
-		Id:  "worker-a",
-		Url: "https://us-central1-dose-board-aaron-dev.cloudfunctions.net/worker-a",
+	urlGen := func(task *crew.Task) (url string, err error) {
+		return "https://us-central1-dose-board-aaron-dev.cloudfunctions.net/" + task.Worker, nil
 	}
-	workers := make(map[string]crew.Worker)
-	workers[devWorker.Id] = devWorker
 
 	// Pull each task group out of storage
 	taskGroups := make(map[string]*crew.TaskGroup)
@@ -50,7 +32,7 @@ func main() {
 		Id:                  "T1",
 		TaskGroupId:         "G1",
 		Name:                "Task One",
-		WorkerId:            "worker-a",
+		Worker:              "worker-a",
 		Workgroup:           "",
 		Key:                 "T1",
 		RemainingAttempts:   5,
@@ -76,10 +58,10 @@ func main() {
 	}
 	taskGroupTasks[task.TaskGroupId] = append(taskGroupTasks[task.TaskGroupId], &task)
 
-	client := DemoClient{}
+	client := crew.HttpPostClient{}
 	// Prepare each task group (creates operator for each task)
 	for _, taskGroup := range taskGroups {
-		taskGroup.Prepare(taskGroupTasks[taskGroup.Id], workers, &client)
+		taskGroup.Prepare(taskGroupTasks[taskGroup.Id], urlGen, &client)
 	}
 
 	// Some debug code...

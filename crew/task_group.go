@@ -18,12 +18,12 @@ type TaskUpdateEvent struct {
 
 // A TaskGroup represents a collection of all the tasks required to complete a body of work.
 type TaskGroup struct {
-	Id            string                   `json:"id"`
-	Name          string                   `json:"name"`
-	IsPaused      bool                     `json:"isPaused"`
-	CreatedAt     time.Time                `json:"createdAt"`
-	Workers       map[string]Worker        `json:"-"`
-	TaskOperators map[string]*TaskOperator `json:"-"` // `json:"tasks"`
+	Id            string                                   `json:"id"`
+	Name          string                                   `json:"name"`
+	IsPaused      bool                                     `json:"isPaused"`
+	CreatedAt     time.Time                                `json:"createdAt"`
+	urlForTask    func(task *Task) (url string, err error) `json:"-"`
+	TaskOperators map[string]*TaskOperator                 `json:"-"` // `json:"tasks"`
 	// This is for sending updates to UI, all group and task create/update/delete events should get sent here:
 	TaskUpdates chan TaskUpdateEvent `json:"-"`
 }
@@ -31,8 +31,8 @@ type TaskGroup struct {
 // Prepare adds the given tasks to the group, wrapping each with an operator.
 // This method also populates Task.Children from other Task.ParentIds within
 // the group.
-func (taskGroup *TaskGroup) Prepare(tasks []*Task, workers map[string]Worker, client TaskClient) {
-	taskGroup.Workers = workers
+func (taskGroup *TaskGroup) Prepare(tasks []*Task, urlForTask func(task *Task) (url string, err error), client TaskClient) {
+	taskGroup.urlForTask = urlForTask
 
 	// Key = parentId
 	// Value = child tasks
@@ -40,7 +40,7 @@ func (taskGroup *TaskGroup) Prepare(tasks []*Task, workers map[string]Worker, cl
 
 	// Create an operator for each task in the group
 	for _, task := range tasks {
-		operator := NewTaskOperator(task, taskGroup, workers, client)
+		operator := NewTaskOperator(task, taskGroup, client)
 		taskGroup.TaskOperators[task.Id] = operator
 
 		// Track children on first pass
@@ -79,7 +79,7 @@ func (taskGroup *TaskGroup) AddTask(task *Task, client TaskClient) error {
 	}
 
 	// Create operator
-	operator := NewTaskOperator(task, taskGroup, taskGroup.Workers, client)
+	operator := NewTaskOperator(task, taskGroup, client)
 
 	// Add to group
 	taskGroup.TaskOperators[task.Id] = operator
@@ -169,14 +169,5 @@ func (taskGroup *TaskGroup) Operate() {
 func (taskGroup *TaskGroup) Shutdown() {
 	for _, operator := range taskGroup.TaskOperators {
 		operator.Shutdown <- true
-	}
-}
-
-// Let operators know about new (or renamed?) workers
-func (taskGroup *TaskGroup) WorkerAvailable(workerId string) {
-	for _, operator := range taskGroup.TaskOperators {
-		if operator.Task.WorkerId == workerId {
-			operator.WorkerAvailable <- struct{}{}
-		}
 	}
 }
