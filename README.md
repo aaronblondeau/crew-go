@@ -9,9 +9,7 @@ go test
 
 TODO : Unit tests for HttpPostClient (using https://pkg.go.dev/net/http/httptest, https://medium.com/zus-health/mocking-outbound-http-requests-in-go-youre-probably-doing-it-wrong-60373a38d2aa)
 
-TODO : piping for WorkgroupDelays, TaskUpdates into bootstrap?
-
-TODO : basic json file persistence
+TODO : piping for WorkgroupDelays (FAN IN), TaskUpdates into bootstrap?
 TODO : mongodb persistence
 TODO : Figure out good value for TaskUpdates channel queue size
 TODO : Implement API / Server Sent Events

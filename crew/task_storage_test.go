@@ -1,6 +1,7 @@
 package crew
 
 import (
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -107,5 +108,124 @@ func TestBootstrap(t *testing.T) {
 	}
 	if groups["BSG1"].TaskOperators["BSG1T1"].Task.RemainingAttempts != 7 {
 		t.Fatalf(`groups["BSG1"].TaskOperators["BSG1T1"].Task.RemainingAttempts = %v, want 7`, groups["BSG1"].TaskOperators["BSG1T1"].Task.RemainingAttempts)
+	}
+}
+
+func TestDeleteTask(t *testing.T) {
+	cwd, _ := os.Getwd()
+	storage := NewJsonFilesystemTaskStorage(cwd + "/test_storage")
+
+	group := NewTaskGroup("GS3", "Test storage")
+	group.Storage = storage
+
+	task := Task{
+		Id:                  "TS3",
+		TaskGroupId:         "GS3",
+		Name:                "Farewell cruel world",
+		Worker:              "worker-a",
+		Workgroup:           "",
+		Key:                 "",
+		RemainingAttempts:   5,
+		IsPaused:            false,
+		IsComplete:          false,
+		Priority:            1,
+		RunAfter:            time.Now().Add(5 * time.Second),
+		ProgressWeight:      1,
+		IsSeed:              false,
+		ErrorDelayInSeconds: 5,
+		Input:               "",
+		Errors:              make([]interface{}, 0),
+		CreatedAt:           time.Now(),
+		ParentIds:           make([]string, 0),
+		Children:            make([]*Task, 0),
+	}
+
+	saveTaskGroupError := storage.SaveTaskGroup(group)
+	if saveTaskGroupError != nil {
+		t.Fatal(`Got an unexpected error when saving task group`, saveTaskGroupError)
+	}
+
+	saveTaskError := storage.SaveTask(group, &task)
+	if saveTaskError != nil {
+		t.Fatal(`Got an unexpected error when saving task`, saveTaskError)
+	}
+
+	// Verify existence of task file
+	fmt.Println(storage.BasePath + "/task_groups/GS3/TS3.json")
+	_, taskFileExistError1 := os.Stat(storage.BasePath + "/task_groups/GS3/TS3.json")
+	if os.IsNotExist(taskFileExistError1) {
+		t.Fatal(`Task file was not found when it was expected to exist.`, taskFileExistError1)
+	}
+
+	// Delete task
+	storage.DeleteTask(group, &task)
+
+	// Verify non-existence of task file
+	_, taskFileExistError2 := os.Stat(storage.BasePath + "/task_groups/GS3/TS3.json")
+	if !os.IsNotExist(taskFileExistError2) {
+		t.Fatal(`Task file was found when it should have been deleted.`, taskFileExistError2)
+	}
+}
+
+func TestDeleteTaskGroup(t *testing.T) {
+	cwd, _ := os.Getwd()
+	storage := NewJsonFilesystemTaskStorage(cwd + "/test_storage")
+
+	group := NewTaskGroup("GS4", "Test storage")
+	group.Storage = storage
+
+	task := Task{
+		Id:                  "TS4",
+		TaskGroupId:         "GS4",
+		Name:                "Farewell cruel world",
+		Worker:              "worker-a",
+		Workgroup:           "",
+		Key:                 "",
+		RemainingAttempts:   5,
+		IsPaused:            false,
+		IsComplete:          false,
+		Priority:            1,
+		RunAfter:            time.Now().Add(5 * time.Second),
+		ProgressWeight:      1,
+		IsSeed:              false,
+		ErrorDelayInSeconds: 5,
+		Input:               "",
+		Errors:              make([]interface{}, 0),
+		CreatedAt:           time.Now(),
+		ParentIds:           make([]string, 0),
+		Children:            make([]*Task, 0),
+	}
+
+	saveTaskGroupError := storage.SaveTaskGroup(group)
+	if saveTaskGroupError != nil {
+		t.Fatal(`Got an unexpected error when saving task group`, saveTaskGroupError)
+	}
+
+	saveTaskError := storage.SaveTask(group, &task)
+	if saveTaskError != nil {
+		t.Fatal(`Got an unexpected error when saving task`, saveTaskError)
+	}
+
+	// Verify existence of task/group file
+	_, taskFileExistError1 := os.Stat(storage.BasePath + "/task_groups/GS4/TS4.json")
+	if os.IsNotExist(taskFileExistError1) {
+		t.Fatal(`Task file was not found when it was expected to exist.`, taskFileExistError1)
+	}
+	_, taskFileExistError2 := os.Stat(storage.BasePath + "/task_groups/GS4/group.json")
+	if os.IsNotExist(taskFileExistError2) {
+		t.Fatal(`Task group file was not found when it was expected to exist.`, taskFileExistError2)
+	}
+
+	// Delete task group
+	storage.DeleteTaskGroup(group)
+
+	// Verify non-existence of task file
+	_, taskFileExistError3 := os.Stat(storage.BasePath + "/task_groups/GS4/TS4.json")
+	if !os.IsNotExist(taskFileExistError3) {
+		t.Fatal(`Task file was found when it should have been deleted.`, taskFileExistError3)
+	}
+	_, taskFileExistError4 := os.Stat(storage.BasePath + "/task_groups/GS4/group.json")
+	if !os.IsNotExist(taskFileExistError4) {
+		t.Fatal(`Task group file found when it should have been deleted.`, taskFileExistError4)
 	}
 }

@@ -79,11 +79,11 @@ func (storage *JsonFilesystemTaskStorage) DeleteTaskGroup(group *TaskGroup) (err
 	if (groupDir == "") || (groupDir == "/") {
 		panic("Bad group directory - could delete everything!")
 	}
-	fmt.Println("~~ Would os.RemoveAll", groupDir)
-	return nil
+	// fmt.Println("~~ Would os.RemoveAll", groupDir)
+	// return nil
 
-	// removeError := os.RemoveAll(groupDir)
-	// return removeError
+	removeError := os.RemoveAll(groupDir)
+	return removeError
 }
 
 func (storage *JsonFilesystemTaskStorage) Bootstrap(shouldOperate bool, client TaskClient) (taskGroups map[string]*TaskGroup, err error) {
@@ -116,6 +116,8 @@ func (storage *JsonFilesystemTaskStorage) Bootstrap(shouldOperate bool, client T
 					fmt.Println("~~ Skipping group - failed to parse group.json", groupParseError)
 					continue
 				}
+				// Make sure group uses this storage
+				group.Storage = storage
 
 				// group ok, look for tasks
 				taskGroupTasks := make([]*Task, 0)

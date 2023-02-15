@@ -1,0 +1,25 @@
+{
+    "id": "invoke_worker_a",
+    "taskGroupId": "demo",
+    "name": "Demo invoke worker a",
+    "worker": "worker-a",
+    "workgroup": "WG",
+    "key": "KEY",
+    "remainingAttempts": 4,
+    "isPaused": false,
+    "isComplete": true,
+    "priority": 1,
+    "runAfter": "2023-02-14T17:30:14.8371921-07:00",
+    "progressWeight": 1,
+    "isSeed": false,
+    "errorDelayInSeconds": 5,
+    "input": "Test",
+    "output": {
+        "at": "Wed Feb 15 2023 20:44:15 GMT+0000 (Coordinated Universal Time)",
+        "message": "Worker A did it!"
+    },
+    "errors": [],
+    "createdAt": "2023-02-14T17:30:09.8371921-07:00",
+    "parentIds": [],
+    "busyExecuting": false
+}
