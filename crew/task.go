@@ -120,7 +120,9 @@ func (operator *TaskOperator) Operate() {
 					operator.Task.RunAfter = newRunAfter
 				}
 
-				// TODO - persist the change
+				// persist the change
+				operator.TaskGroup.Storage.SaveTask(operator.TaskGroup, operator.Task)
+
 				// TODO - handle additional fields
 
 				select {
@@ -139,7 +141,8 @@ func (operator *TaskOperator) Operate() {
 
 			case isShuttingDown := <-operator.Shutdown:
 				if isShuttingDown {
-					// TODO, stop any resources, persist task...
+					// Save immediately once we get a shutdown request
+					operator.TaskGroup.Storage.SaveTask(operator.TaskGroup, operator.Task)
 
 					// if operator.Task.BusyExecuting = true, wait up to 60 seconds till false
 					if operator.Task.BusyExecuting {
@@ -149,6 +152,9 @@ func (operator *TaskOperator) Operate() {
 							waitCount++
 						}
 					}
+
+					// Save again after any pending execution id complete
+					operator.TaskGroup.Storage.SaveTask(operator.TaskGroup, operator.Task)
 
 					operator.CancelExecute()
 					operator.Terminated <- true
@@ -324,7 +330,8 @@ func (operator *TaskOperator) Execute() {
 							keySiblingOperator.Task.IsComplete = true
 							keySiblingOperator.Task.Output = workerResponse.Output
 
-							// TODO - persist keySiblingOperator.Task
+							// persist keySiblingOperator.Task
+							keySiblingOperator.TaskGroup.Storage.SaveTask(keySiblingOperator.TaskGroup, keySiblingOperator.Task)
 
 							select {
 							case operator.TaskGroup.TaskUpdates <- TaskUpdateEvent{
@@ -349,13 +356,14 @@ func (operator *TaskOperator) Execute() {
 		}
 
 		if workerResponse.WorkgroupDelayInSeconds > 0 && operator.Task.Workgroup != "" {
-			for _, neighbor := range operator.TaskGroup.TaskOperators {
-				if neighbor.Task.Workgroup == operator.Task.Workgroup && !neighbor.Task.IsComplete {
-					// Update runAfter for neighbor
-					neighbor.ExternalUpdates <- map[string]interface{}{
-						"runAfter": time.Now().Add(time.Duration(workerResponse.WorkgroupDelayInSeconds) * time.Second),
-					}
-				}
+			operator.TaskGroup.DelayTasksInWorkgroup(operator.Task.Workgroup, workerResponse.WorkgroupDelayInSeconds)
+			select {
+			case operator.TaskGroup.WorkgroupDelays <- WorkgroupDelayEvent{
+				Workgroup:         operator.Task.Workgroup,
+				DelayInSeconds:    workerResponse.WorkgroupDelayInSeconds,
+				OriginTaskGroupId: operator.TaskGroup.Id,
+			}:
+			default:
 			}
 		}
 
@@ -376,7 +384,9 @@ func (operator *TaskOperator) Execute() {
 
 		operator.Task.BusyExecuting = false
 
-		// TODO - persist task
+		// persist the task
+		operator.TaskGroup.Storage.SaveTask(operator.TaskGroup, operator.Task)
+
 		select {
 		case operator.TaskGroup.TaskUpdates <- TaskUpdateEvent{
 			Event: "update",
@@ -422,4 +432,12 @@ func (task *Task) CanExecute(taskGroup *TaskGroup) bool {
 	}
 
 	return true
+}
+
+func (task *Task) SaveToStorage() {
+
+}
+
+func (task *Task) DeleteFromStorage() {
+
 }

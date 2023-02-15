@@ -1,0 +1,22 @@
+{
+    "id": "BSG1T1",
+    "taskGroupId": "BSG1",
+    "name": "Bootstrap Test Task 1",
+    "worker": "worker-a",
+    "workgroup": "WG",
+    "key": "KEY",
+    "remainingAttempts": 7,
+    "isPaused": false,
+    "isComplete": false,
+    "priority": 1,
+    "runAfter": "2023-02-14T17:30:14.8371921-07:00",
+    "progressWeight": 1,
+    "isSeed": false,
+    "errorDelayInSeconds": 5,
+    "input": "Test",
+    "output": null,
+    "errors": [],
+    "createdAt": "2023-02-14T17:30:09.8371921-07:00",
+    "parentIds": [],
+    "busyExecuting": false
+}

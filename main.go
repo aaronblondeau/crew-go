@@ -82,6 +82,16 @@ func main() {
 			fmt.Println("Waiting for stuff to happen")
 			// Wait for a complete/error event (or timeout the test)
 			select {
+			case wgDelayEvent := <-group.WorkgroupDelays:
+				fmt.Println("Got a workgroup delay!", wgDelayEvent.Workgroup)
+				// Pass workgroup delay on to other task groups
+				for _, group := range taskGroups {
+					// Group where event originated will have already processed the delay so skip it
+					if group.Id != wgDelayEvent.OriginTaskGroupId {
+						group.DelayTasksInWorkgroup(wgDelayEvent.Workgroup, wgDelayEvent.DelayInSeconds)
+					}
+				}
+
 			case event := <-group.TaskUpdates:
 				fmt.Println("Got an update!", event.Event, event.Task.IsComplete)
 				if event.Task.IsComplete {

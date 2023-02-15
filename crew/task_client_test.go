@@ -751,24 +751,29 @@ func TestChildrenDelayInSecondsSecondsOutput(t *testing.T) {
 	var wgChild sync.WaitGroup
 	wgChild.Add(1)
 	go func() {
-		triggerChildUpdate := true
+		childUpdated := false
+		childDone := false
+		parentDone := false
 		for event := range group.TaskUpdates {
 			fmt.Println("Got an update!", event.Event, event.Task.Id, event.Task.IsComplete)
 			if event.Task.Id == parent.Id {
-				if event.Task.IsComplete {
+				if !parentDone && event.Task.IsComplete {
 					wgParent.Done()
+					parentDone = true
 				}
 			}
 			if event.Task.Id == child.Id {
-				if event.Task.IsComplete {
+				if !childDone && event.Task.IsComplete {
 					wgChild.Done()
-					return
-				} else {
-					if triggerChildUpdate && !event.Task.RunAfter.IsZero() {
-						wgChildUpdate.Done()
-						triggerChildUpdate = false
-					}
+					childDone = true
 				}
+				if !childUpdated && !event.Task.RunAfter.IsZero() {
+					wgChildUpdate.Done()
+					childUpdated = true
+				}
+			}
+			if childUpdated && childDone && parentDone {
+				return
 			}
 		}
 	}()
@@ -782,29 +787,44 @@ func TestChildrenDelayInSecondsSecondsOutput(t *testing.T) {
 	group.PreloadTasks([]*Task{&parent}, &client)
 	group.Operate()
 
-	// Wait for task to complete
-	wgParent.Wait()
 	now := time.Now()
-	if parent.IsComplete != true {
-		t.Fatalf(`parent.IsComplete = %v, want true`, parent.IsComplete)
-	}
-	if len(parent.Children) != 1 {
-		t.Fatalf(`len(parent.Children) = %v, want 1`, len(parent.Children))
-	}
+
+	var wgSteps sync.WaitGroup
+	wgSteps.Add(3)
+
+	// Wait for task to complete
+	go func() {
+		wgParent.Wait()
+		if parent.IsComplete != true {
+			t.Fatalf(`parent.IsComplete = %v, want true`, parent.IsComplete)
+		}
+		if len(parent.Children) != 1 {
+			t.Fatalf(`len(parent.Children) = %v, want 1`, len(parent.Children))
+		}
+		wgSteps.Done()
+	}()
 
 	// Wait for child to get updated (runAfter update)
-	wgChildUpdate.Wait()
-	// Make sure child has RunAfter in future
-	threshold := now.Add(3 * time.Second)
-	if !child.RunAfter.After(threshold) {
-		t.Fatalf(`child.RunAfter = %v, should be after %v`, child.RunAfter, threshold)
-	}
+	go func() {
+		wgChildUpdate.Wait()
+		// Make sure child has RunAfter in future
+		threshold := now.Add(3 * time.Second)
+		if !child.RunAfter.After(threshold) {
+			t.Fatalf(`child.RunAfter = %v, should be after %v`, child.RunAfter, threshold)
+		}
+		wgSteps.Done()
+	}()
 
 	// Wait for child to complete
-	wgChild.Wait()
-	if child.IsComplete != true {
-		t.Fatalf(`child.IsComplete = %v, want true`, child.IsComplete)
-	}
+	go func() {
+		wgChild.Wait()
+		if child.IsComplete != true {
+			t.Fatalf(`child.IsComplete = %v, want true`, child.IsComplete)
+		}
+		wgSteps.Done()
+	}()
+
+	wgSteps.Wait()
 
 	// It should have taken more than 5 seconds for child to complete
 	now2 := time.Now()

@@ -16,6 +16,12 @@ type TaskUpdateEvent struct {
 	Task  Task   `json:"task"`
 }
 
+type WorkgroupDelayEvent struct {
+	Workgroup         string `json:"workgroup"`
+	DelayInSeconds    int    `json:"delayInSeconds"`
+	OriginTaskGroupId string `json:"originTaskGroupId"`
+}
+
 // A TaskGroup represents a collection of all the tasks required to complete a body of work.
 type TaskGroup struct {
 	Id            string                   `json:"id"`
@@ -24,17 +30,21 @@ type TaskGroup struct {
 	CreatedAt     time.Time                `json:"createdAt"`
 	TaskOperators map[string]*TaskOperator `json:"-"` // `json:"tasks"`
 	// This is for sending updates to UI, all group and task create/update/delete events should get sent here:
-	TaskUpdates chan TaskUpdateEvent `json:"-"`
+	TaskUpdates     chan TaskUpdateEvent     `json:"-"`
+	WorkgroupDelays chan WorkgroupDelayEvent `json:"-"`
+	Storage         TaskStorage              `json:"-"`
 }
 
 func NewTaskGroup(id string, name string) *TaskGroup {
 	tg := TaskGroup{
-		Id:            id,
-		Name:          name,
-		IsPaused:      false,
-		CreatedAt:     time.Now(),
-		TaskOperators: make(map[string]*TaskOperator),
-		TaskUpdates:   make(chan TaskUpdateEvent, 8),
+		Id:              id,
+		Name:            name,
+		IsPaused:        false,
+		CreatedAt:       time.Now(),
+		TaskOperators:   make(map[string]*TaskOperator),
+		TaskUpdates:     make(chan TaskUpdateEvent, 8),
+		WorkgroupDelays: make(chan WorkgroupDelayEvent, 8),
+		Storage:         NewMemoryTaskStorage(),
 	}
 	return &tg
 }
@@ -117,7 +127,9 @@ func (taskGroup *TaskGroup) AddTask(task *Task, client TaskClient) error {
 	default:
 	}
 
-	// TODO - persist
+	// Persist the task
+	taskGroup.Storage.SaveTask(operator.TaskGroup, operator.Task)
+
 	return nil
 }
 
@@ -170,7 +182,9 @@ func (taskGroup *TaskGroup) DeleteTask(id string) error {
 	// Remove from the group
 	delete(taskGroup.TaskOperators, operator.Task.Id)
 
-	// TODO - persist the change
+	// persist the change
+	taskGroup.Storage.DeleteTask(operator.TaskGroup, operator.Task)
+
 	return nil
 }
 
@@ -185,5 +199,16 @@ func (taskGroup *TaskGroup) Operate() {
 func (taskGroup *TaskGroup) Shutdown() {
 	for _, operator := range taskGroup.TaskOperators {
 		operator.Shutdown <- true
+	}
+}
+
+func (taskGroup *TaskGroup) DelayTasksInWorkgroup(workgroup string, delayInSeconds int) {
+	for _, neighbor := range taskGroup.TaskOperators {
+		if neighbor.Task.Workgroup == workgroup && !neighbor.Task.IsComplete {
+			// Update runAfter for neighbor
+			neighbor.ExternalUpdates <- map[string]interface{}{
+				"runAfter": time.Now().Add(time.Duration(delayInSeconds) * time.Second),
+			}
+		}
 	}
 }
