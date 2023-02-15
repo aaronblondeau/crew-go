@@ -4,10 +4,8 @@ Note, use this to exclude from JSON `json:"-"` : https://pkg.go.dev/encoding/jso
 
 // Running tests
 
-cd models
+cd crew
 go test
-
-TODO : Unit tests for HttpPostClient (using https://pkg.go.dev/net/http/httptest, https://medium.com/zus-health/mocking-outbound-http-requests-in-go-youre-probably-doing-it-wrong-60373a38d2aa)
 
 TODO : piping for WorkgroupDelays (FAN IN), TaskUpdates into bootstrap?
 TODO : mongodb persistence

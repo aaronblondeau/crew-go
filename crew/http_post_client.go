@@ -87,18 +87,25 @@ func (client *HttpPostClient) Post(task *Task, taskGroup *TaskGroup) (response W
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
 
 	httpClient := &http.Client{}
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return WorkerResponse{}, err
 	}
-	defer resp.Body.Close()
 
+	defer resp.Body.Close()
 	bodyBytes, bodyErr := io.ReadAll(resp.Body)
 	if bodyErr != nil {
 		return WorkerResponse{}, bodyErr
 	}
+
+	// Non 200 response => return response body via call error
+	if resp.StatusCode != http.StatusOK {
+		return WorkerResponse{}, errors.New(string(bodyBytes))
+	}
+
 	bodyString := string(bodyBytes)
 	fmt.Println("Worker Response", bodyString)
 
