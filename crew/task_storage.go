@@ -12,7 +12,7 @@ type TaskStorage interface {
 	DeleteTask(group *TaskGroup, task *Task) (err error)
 	SaveTaskGroup(group *TaskGroup) (err error)
 	DeleteTaskGroup(group *TaskGroup) (err error)
-	Bootstrap(shouldOperate bool, client TaskClient) (taskGroups map[string]*TaskGroup, err error)
+	Bootstrap(shouldOperate bool, client TaskClient) (taskGroupController *TaskGroupController, err error)
 }
 
 // Filesystem Storage (JSON)
@@ -86,12 +86,12 @@ func (storage *JsonFilesystemTaskStorage) DeleteTaskGroup(group *TaskGroup) (err
 	return removeError
 }
 
-func (storage *JsonFilesystemTaskStorage) Bootstrap(shouldOperate bool, client TaskClient) (taskGroups map[string]*TaskGroup, err error) {
-	groups := make(map[string]*TaskGroup)
+func (storage *JsonFilesystemTaskStorage) Bootstrap(shouldOperate bool, client TaskClient) (taskGroupController *TaskGroupController, err error) {
+	taskGroupController = NewTaskGroupController()
 
 	entries, readDirError := os.ReadDir(storage.BasePath + "/task_groups")
 	if readDirError != nil {
-		return nil, readDirError
+		return taskGroupController, readDirError
 	}
 
 	for _, groupEntry := range entries {
@@ -110,7 +110,7 @@ func (storage *JsonFilesystemTaskStorage) Bootstrap(shouldOperate bool, client T
 					continue
 				}
 
-				group := NewTaskGroup("", "")
+				group := NewTaskGroup("", "", taskGroupController)
 				groupParseError := json.Unmarshal(groupData, &group)
 				if groupParseError != nil {
 					fmt.Println("~~ Skipping group - failed to parse group.json", groupParseError)
@@ -156,7 +156,7 @@ func (storage *JsonFilesystemTaskStorage) Bootstrap(shouldOperate bool, client T
 					}
 				}
 
-				groups[group.Id] = group
+				taskGroupController.AddGroup(group)
 				group.PreloadTasks(taskGroupTasks, client)
 			} else {
 				fmt.Println("~~ Cannot find group.json")
@@ -165,12 +165,9 @@ func (storage *JsonFilesystemTaskStorage) Bootstrap(shouldOperate bool, client T
 	}
 
 	if shouldOperate {
-		for _, taskGroup := range groups {
-			taskGroup.Operate()
-		}
+		taskGroupController.Operate()
 	}
-
-	return groups, nil
+	return
 }
 
 func NewJsonFilesystemTaskStorage(basePath string) *JsonFilesystemTaskStorage {
@@ -205,9 +202,9 @@ func (storage *MemoryTaskStorage) DeleteTaskGroup(group *TaskGroup) (err error) 
 	return nil
 }
 
-func (storage *MemoryTaskStorage) Bootstrap(shouldOperate bool, client TaskClient) (taskGroups map[string]*TaskGroup, err error) {
-	groups := make(map[string]*TaskGroup)
-	return groups, nil
+func (storage *MemoryTaskStorage) Bootstrap(shouldOperate bool, client TaskClient) (taskGroupController *TaskGroupController, err error) {
+	controller := NewTaskGroupController()
+	return controller, nil
 }
 
 func NewMemoryTaskStorage() *MemoryTaskStorage {

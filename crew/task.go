@@ -125,15 +125,12 @@ func (operator *TaskOperator) Operate() {
 
 				// TODO - handle additional fields
 
-				select {
-				case operator.TaskGroup.TaskUpdates <- TaskUpdateEvent{
+				// emit update event
+				operator.TaskGroup.Controller.ProcessTaskUpdate(TaskUpdateEvent{
 					Event: "update",
 					Task:  *operator.Task,
-				}:
-					fmt.Println("sent executing(false) event")
-				default:
-					fmt.Println("no task_update event sent")
-				}
+				})
+
 				operator.Evaluate()
 
 			case <-operator.ParentCompleteEvents: // parentTask :=
@@ -240,13 +237,11 @@ func (operator *TaskOperator) Execute() {
 			fmt.Println("no executing event sent")
 		}
 
-		select {
-		case operator.TaskGroup.TaskUpdates <- TaskUpdateEvent{
+		// emit update event
+		operator.TaskGroup.Controller.ProcessTaskUpdate(TaskUpdateEvent{
 			Event: "update",
 			Task:  *operator.Task,
-		}:
-		default:
-		}
+		})
 
 		workerResponse, err := operator.Client.Post(operator.Task, operator.TaskGroup)
 
@@ -333,13 +328,11 @@ func (operator *TaskOperator) Execute() {
 							// persist keySiblingOperator.Task
 							keySiblingOperator.TaskGroup.Storage.SaveTask(keySiblingOperator.TaskGroup, keySiblingOperator.Task)
 
-							select {
-							case operator.TaskGroup.TaskUpdates <- TaskUpdateEvent{
+							// emit update event
+							operator.TaskGroup.Controller.ProcessTaskUpdate(TaskUpdateEvent{
 								Event: "update",
 								Task:  *keySiblingOperator.Task,
-							}:
-							default:
-							}
+							})
 
 							// Let children know parent is complete
 							for _, child := range keySiblingOperator.Task.Children {
@@ -356,15 +349,7 @@ func (operator *TaskOperator) Execute() {
 		}
 
 		if workerResponse.WorkgroupDelayInSeconds > 0 && operator.Task.Workgroup != "" {
-			operator.TaskGroup.DelayTasksInWorkgroup(operator.Task.Workgroup, workerResponse.WorkgroupDelayInSeconds)
-			select {
-			case operator.TaskGroup.WorkgroupDelays <- WorkgroupDelayEvent{
-				Workgroup:         operator.Task.Workgroup,
-				DelayInSeconds:    workerResponse.WorkgroupDelayInSeconds,
-				OriginTaskGroupId: operator.TaskGroup.Id,
-			}:
-			default:
-			}
+			operator.TaskGroup.Controller.DelayWorkgroup(operator.Task.Workgroup, workerResponse.WorkgroupDelayInSeconds, operator.TaskGroup.Id)
 		}
 
 		if workerResponse.ChildrenDelayInSeconds > 0 {
@@ -387,13 +372,11 @@ func (operator *TaskOperator) Execute() {
 		// persist the task
 		operator.TaskGroup.Storage.SaveTask(operator.TaskGroup, operator.Task)
 
-		select {
-		case operator.TaskGroup.TaskUpdates <- TaskUpdateEvent{
+		// emit update event
+		operator.TaskGroup.Controller.ProcessTaskUpdate(TaskUpdateEvent{
 			Event: "update",
 			Task:  *operator.Task,
-		}:
-		default:
-		}
+		})
 
 		select {
 		case operator.Executing <- false:

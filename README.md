@@ -8,7 +8,7 @@ cd crew
 go test
 
 TODO : piping for WorkgroupDelays (FAN IN), TaskUpdates into bootstrap?
-TODO : mongodb persistence
+TODO : postgres/firestore persistence
 TODO : Figure out good value for TaskUpdates channel queue size
 TODO : Implement API / Server Sent Events
 TODO : Implement an (configurably optional) cleanup "cron" for removing old taskgroups
