@@ -215,8 +215,9 @@ func (controller *TaskGroupController) DelayWorkgroup(workgroup string, delayInS
 		for _, task := range group.TaskOperators {
 			if task.Task.Workgroup == workgroup && !task.Task.IsComplete {
 				// Update runAfter for task
+				newRunAfter := time.Now().Add(time.Duration(delayInSeconds * int(time.Second)))
 				task.ExternalUpdates <- map[string]interface{}{
-					"runAfter": time.Now().Add(time.Duration(delayInSeconds) * time.Second),
+					"runAfter": newRunAfter,
 				}
 			}
 		}

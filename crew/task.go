@@ -61,13 +61,18 @@ type TaskOperator struct {
 }
 
 func NewTaskOperator(task *Task, taskGroup *TaskGroup) *TaskOperator {
+	execTimer := time.NewTimer(1000 * time.Second)
+	execTimer.Stop()
+	evalTimer := time.NewTimer(1000 * time.Second)
+	evalTimer.Stop()
+
 	// client := NewHttpPostClient()
 	t := TaskOperator{
 		Task:                 task,
 		TaskGroup:            taskGroup,
 		ExternalUpdates:      make(chan map[string]interface{}, 8),
-		ExecuteTimer:         time.NewTimer(time.Second * -1),
-		EvaulateTimer:        time.NewTimer(time.Second * -1),
+		ExecuteTimer:         execTimer,
+		EvaulateTimer:        evalTimer,
 		Shutdown:             make(chan bool),
 		ParentCompleteEvents: make(chan *Task, len(task.Children)),
 		Executing:            make(chan bool),
@@ -160,7 +165,7 @@ func (operator *TaskOperator) Operate() {
 			}
 		}
 	}()
-	// operator.Evaluate()
+	operator.Evaluate()
 }
 
 // Evaluate determines if a Task is eligible to be executed and begins
@@ -292,6 +297,12 @@ func (operator *TaskOperator) Execute() {
 						if !currentTaskIsParent {
 							child.ParentIds = append(child.ParentIds, operator.Task.Id)
 						}
+						if workerResponse.ChildrenDelayInSeconds > 0 {
+							child.RunAfter = time.Now().Add(time.Duration(workerResponse.ChildrenDelayInSeconds * int(time.Second)))
+						}
+						if workerResponse.WorkgroupDelayInSeconds > 0 && operator.Task.Workgroup != "" && child.Workgroup == operator.Task.Workgroup {
+							child.RunAfter = time.Now().Add(time.Duration(workerResponse.WorkgroupDelayInSeconds * int(time.Second)))
+						}
 
 						// Add task will error if child exists or parents are missing
 						// Add task also emits TaskUpdates for us
@@ -353,14 +364,14 @@ func (operator *TaskOperator) Execute() {
 		}
 
 		if workerResponse.ChildrenDelayInSeconds > 0 {
-			// Note, this is not done above as some tasks may have children that were pre-populated
+			// Note, this is done here as well in addition to child.RunAfter= above because some tasks may have children that were pre-populated
 			for _, child := range operator.Task.Children {
 				if !child.IsComplete {
 					childOp, found := operator.TaskGroup.TaskOperators[child.Id]
 					if found {
 						// Update runAfter for child
 						childOp.ExternalUpdates <- map[string]interface{}{
-							"runAfter": time.Now().Add(time.Duration(workerResponse.ChildrenDelayInSeconds) * time.Second),
+							"runAfter": time.Now().Add(time.Duration(workerResponse.ChildrenDelayInSeconds * int(time.Second))),
 						}
 					}
 				}
@@ -415,12 +426,4 @@ func (task *Task) CanExecute(taskGroup *TaskGroup) bool {
 	}
 
 	return true
-}
-
-func (task *Task) SaveToStorage() {
-
-}
-
-func (task *Task) DeleteFromStorage() {
-
 }

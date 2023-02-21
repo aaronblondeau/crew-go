@@ -41,7 +41,8 @@ func TestSuccessResponse(t *testing.T) {
 		ParentIds:         []string{},
 	}
 
-	taskGroup := NewTaskGroup("HTTPG1", "HTTPG1")
+	taskGroupController := NewTaskGroupController()
+	taskGroup := NewTaskGroup("HTTPG1", "HTTPG1", taskGroupController)
 
 	response, postError := client.Post(&task, taskGroup)
 
@@ -98,7 +99,8 @@ func TestHttpErrorResponse(t *testing.T) {
 		ParentIds:         []string{},
 	}
 
-	taskGroup := NewTaskGroup("HTTPG2", "HTTPG2")
+	taskGroupController := NewTaskGroupController()
+	taskGroup := NewTaskGroup("HTTPG2", "HTTPG2", taskGroupController)
 
 	_, postError := client.Post(&task, taskGroup)
 
@@ -140,7 +142,8 @@ func TestErrorResponse(t *testing.T) {
 		ParentIds:         []string{},
 	}
 
-	taskGroup := NewTaskGroup("HTTPG3", "HTTPG3")
+	taskGroupController := NewTaskGroupController()
+	taskGroup := NewTaskGroup("HTTPG3", "HTTPG3", taskGroupController)
 
 	response, postError := client.Post(&task, taskGroup)
 
@@ -236,7 +239,8 @@ func TestParentDataInPayload(t *testing.T) {
 		ParentIds:         []string{"T19P"},
 	}
 
-	taskGroup := NewTaskGroup("HTTPG4", "HTTPG4")
+	taskGroupController := NewTaskGroupController()
+	taskGroup := NewTaskGroup("HTTPG4", "HTTPG4", taskGroupController)
 
 	taskGroup.PreloadTasks([]*Task{&task, &child}, client)
 
@@ -279,7 +283,8 @@ func TestChildrenResponse(t *testing.T) {
 		ParentIds:         []string{},
 	}
 
-	taskGroup := NewTaskGroup("HTTPG5", "HTTPG5")
+	taskGroupController := NewTaskGroupController()
+	taskGroup := NewTaskGroup("HTTPG5", "HTTPG5", taskGroupController)
 
 	response, postError := client.Post(&task, taskGroup)
 

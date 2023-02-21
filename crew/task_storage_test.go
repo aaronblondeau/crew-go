@@ -26,7 +26,8 @@ func TestStoreTaskGroup(t *testing.T) {
 	cwd, _ := os.Getwd()
 	storage := NewJsonFilesystemTaskStorage(cwd + "/test_storage")
 
-	group := NewTaskGroup("GS1", "Test storage")
+	taskGroupController := NewTaskGroupController()
+	group := NewTaskGroup("GS1", "Test storage", taskGroupController)
 	group.Storage = storage
 
 	saveTaskGroupError := storage.SaveTaskGroup(group)
@@ -39,7 +40,8 @@ func TestStoreTaskGroupAndTask(t *testing.T) {
 	cwd, _ := os.Getwd()
 	storage := NewJsonFilesystemTaskStorage(cwd + "/test_storage")
 
-	group := NewTaskGroup("GS2", "Test storage")
+	taskGroupController := NewTaskGroupController()
+	group := NewTaskGroup("GS2", "Test storage", taskGroupController)
 	group.Storage = storage
 
 	task := Task{
@@ -80,34 +82,34 @@ func TestBootstrap(t *testing.T) {
 	storage := NewJsonFilesystemTaskStorage(cwd + "/test_storage/bootstrap_a")
 	client := StorageTestClient{}
 
-	groups, bootstrapError := storage.Bootstrap(false, client)
+	taskGroupController, bootstrapError := storage.Bootstrap(false, client)
 	if bootstrapError != nil {
 		t.Fatal(`Got an unexpected error when loading bootstrap_a`, bootstrapError)
 	}
-	if len(groups) != 1 {
-		t.Fatalf(`len(groups) = %v, want 1`, len(groups))
+	if len(taskGroupController.TaskGroups) != 1 {
+		t.Fatalf(`len(taskGroupController.TaskGroups) = %v, want 1`, len(taskGroupController.TaskGroups))
 	}
 
 	// check group fields
-	if groups["BSG1"].Name != "Storage bootstrap test 1" {
-		t.Fatalf(`groups["BSG1"].Name = %v, want "Storage bootstrap test 1"`, groups["BSG1"].Name)
+	if taskGroupController.TaskGroups["BSG1"].Name != "Storage bootstrap test 1" {
+		t.Fatalf(`taskGroupController.TaskGroups["BSG1"].Name = %v, want "Storage bootstrap test 1"`, taskGroupController.TaskGroups["BSG1"].Name)
 	}
-	if groups["BSG1"].IsPaused != false {
-		t.Fatalf(`groups["BSG1"].IsPaused = %v, want false`, groups["BSG1"].IsPaused)
+	if taskGroupController.TaskGroups["BSG1"].IsPaused != false {
+		t.Fatalf(`taskGroupController.TaskGroups["BSG1"].IsPaused = %v, want false`, taskGroupController.TaskGroups["BSG1"].IsPaused)
 	}
-	if groups["BSG1"].CreatedAt.Year() != 2023 {
-		t.Fatalf(`groups["BSG1"].CreatedAt.Year() = %v, want 2023`, groups["BSG1"].CreatedAt.Year())
+	if taskGroupController.TaskGroups["BSG1"].CreatedAt.Year() != 2023 {
+		t.Fatalf(`taskGroupController.TaskGroups["BSG1"].CreatedAt.Year() = %v, want 2023`, taskGroupController.TaskGroups["BSG1"].CreatedAt.Year())
 	}
 
 	// check task fields
-	if len(groups["BSG1"].TaskOperators) != 1 {
-		t.Fatalf(`len(groups["BSG1"].TaskOperators) = %v, want 1`, len(groups["BSG1"].TaskOperators))
+	if len(taskGroupController.TaskGroups["BSG1"].TaskOperators) != 1 {
+		t.Fatalf(`len(taskGroupController.TaskGroups["BSG1"].TaskOperators) = %v, want 1`, len(taskGroupController.TaskGroups["BSG1"].TaskOperators))
 	}
-	if groups["BSG1"].TaskOperators["BSG1T1"].Task.Name != "Bootstrap Test Task 1" {
-		t.Fatalf(`groups["BSG1"].TaskOperators["BSG1T1"].Task.Name = %v, want "Bootstrap Test Task 1"`, groups["BSG1"].TaskOperators["BSG1T1"].Task.Name)
+	if taskGroupController.TaskGroups["BSG1"].TaskOperators["BSG1T1"].Task.Name != "Bootstrap Test Task 1" {
+		t.Fatalf(`taskGroupController.TaskGroups["BSG1"].TaskOperators["BSG1T1"].Task.Name = %v, want "Bootstrap Test Task 1"`, taskGroupController.TaskGroups["BSG1"].TaskOperators["BSG1T1"].Task.Name)
 	}
-	if groups["BSG1"].TaskOperators["BSG1T1"].Task.RemainingAttempts != 7 {
-		t.Fatalf(`groups["BSG1"].TaskOperators["BSG1T1"].Task.RemainingAttempts = %v, want 7`, groups["BSG1"].TaskOperators["BSG1T1"].Task.RemainingAttempts)
+	if taskGroupController.TaskGroups["BSG1"].TaskOperators["BSG1T1"].Task.RemainingAttempts != 7 {
+		t.Fatalf(`taskGroupController.TaskGroups["BSG1"].TaskOperators["BSG1T1"].Task.RemainingAttempts = %v, want 7`, taskGroupController.TaskGroups["BSG1"].TaskOperators["BSG1T1"].Task.RemainingAttempts)
 	}
 }
 
@@ -115,7 +117,8 @@ func TestDeleteTask(t *testing.T) {
 	cwd, _ := os.Getwd()
 	storage := NewJsonFilesystemTaskStorage(cwd + "/test_storage")
 
-	group := NewTaskGroup("GS3", "Test storage")
+	taskGroupController := NewTaskGroupController()
+	group := NewTaskGroup("GS3", "Test storage", taskGroupController)
 	group.Storage = storage
 
 	task := Task{
@@ -171,7 +174,8 @@ func TestDeleteTaskGroup(t *testing.T) {
 	cwd, _ := os.Getwd()
 	storage := NewJsonFilesystemTaskStorage(cwd + "/test_storage")
 
-	group := NewTaskGroup("GS4", "Test storage")
+	taskGroupController := NewTaskGroupController()
+	group := NewTaskGroup("GS4", "Test storage", taskGroupController)
 	group.Storage = storage
 
 	task := Task{

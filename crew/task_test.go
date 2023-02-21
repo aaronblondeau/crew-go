@@ -35,7 +35,8 @@ func TestCanExecute(t *testing.T) {
 		Priority:          1,
 		ProgressWeight:    1,
 	}
-	group := NewTaskGroup("G10", "Test")
+	taskGroupController := NewTaskGroupController()
+	group := NewTaskGroup("G10", "Test", taskGroupController)
 
 	group.AddTask(&task, &TaskTestClient{})
 
@@ -67,7 +68,8 @@ func TestCannotExecuteIfTaskIsPaused(t *testing.T) {
 		ParentIds:           make([]string, 0),
 		Children:            make([]*Task, 0),
 	}
-	group := NewTaskGroup("G11", "Test")
+	taskGroupController := NewTaskGroupController()
+	group := NewTaskGroup("G11", "Test", taskGroupController)
 
 	canExecute := task.CanExecute(group)
 	if canExecute {
@@ -104,8 +106,8 @@ func TestCannotExecuteIfParentsIncomplete(t *testing.T) {
 		ProgressWeight:    1,
 		ParentIds:         []string{"T12P"},
 	}
-
-	group := NewTaskGroup("G12", "Test")
+	taskGroupController := NewTaskGroupController()
+	group := NewTaskGroup("G12", "Test", taskGroupController)
 	group.PreloadTasks([]*Task{&parent, &task}, &TaskTestClient{})
 
 	canExecute := task.CanExecute(group)
@@ -130,7 +132,8 @@ func TestCanUpdateTask(t *testing.T) {
 		ParentIds:         []string{"T1"},
 	}
 
-	group := NewTaskGroup("G13", "Test")
+	taskGroupController := NewTaskGroupController()
+	group := NewTaskGroup("G13", "Test", taskGroupController)
 	group.PreloadTasks([]*Task{&task}, &TaskTestClient{})
 	group.Operate()
 
@@ -138,7 +141,7 @@ func TestCanUpdateTask(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
-		<-group.TaskUpdates
+		<-group.Controller.TaskUpdates
 		wg.Done()
 	}()
 

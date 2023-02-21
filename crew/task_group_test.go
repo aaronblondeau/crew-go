@@ -50,7 +50,8 @@ func TestPrepareInflatesChildren(t *testing.T) {
 		ProgressWeight:    1,
 		ParentIds:         []string{"T7A"},
 	}
-	group := NewTaskGroup("G7", "Test")
+	taskGroupController := NewTaskGroupController()
+	group := NewTaskGroup("G7", "Test", taskGroupController)
 	group.PreloadTasks([]*Task{&parent, &task}, &TaskGroupTestClient{})
 
 	if parent.Children[0] != &task {
@@ -73,8 +74,8 @@ func TestCanDeleteTask(t *testing.T) {
 		ProgressWeight:    1,
 		ParentIds:         []string{},
 	}
-
-	group := NewTaskGroup("G8", "Test")
+	taskGroupController := NewTaskGroupController()
+	group := NewTaskGroup("G8", "Test", taskGroupController)
 	group.PreloadTasks([]*Task{&task}, &TaskGroupTestClient{})
 	// group.Operate()
 
@@ -106,7 +107,8 @@ func TestCanAddTask(t *testing.T) {
 		ParentIds:      []string{},
 	}
 
-	group := NewTaskGroup("G9", "Test")
+	taskGroupController := NewTaskGroupController()
+	group := NewTaskGroup("G9", "Test", taskGroupController)
 
 	if len(group.TaskOperators) != 0 {
 		t.Errorf("len(group.TaskOperators) = %d; want 0", len(group.TaskOperators))
@@ -117,7 +119,7 @@ func TestCanAddTask(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
-		for event := range group.TaskUpdates {
+		for event := range group.Controller.TaskUpdates {
 			fmt.Println("Got an update!", event.Event, event.Task.IsComplete)
 			if event.Task.IsComplete {
 				wg.Done()
