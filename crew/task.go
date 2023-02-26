@@ -40,16 +40,22 @@ type Task struct {
 	ParentIds           []string      `json:"parentIds"`
 	BusyExecuting       bool          `json:"busyExecuting"`
 	Children            []*Task       `json:"-"`
+	IsDeleting          bool          `json:"-"`
 	// parentsComplete
 	// assignedTo
 	// assignedAt
+}
+
+type TaskUpdate struct {
+	Update         map[string]interface{}
+	UpdateComplete chan error
 }
 
 // A TaskOperator manages the lifecycle and state of a Task.
 type TaskOperator struct {
 	Task                 *Task
 	TaskGroup            *TaskGroup
-	ExternalUpdates      chan map[string]interface{}
+	ExternalUpdates      chan TaskUpdate
 	ExecuteTimer         *time.Timer
 	EvaulateTimer        *time.Timer
 	Shutdown             chan bool
@@ -70,7 +76,7 @@ func NewTaskOperator(task *Task, taskGroup *TaskGroup) *TaskOperator {
 	t := TaskOperator{
 		Task:                 task,
 		TaskGroup:            taskGroup,
-		ExternalUpdates:      make(chan map[string]interface{}, 8),
+		ExternalUpdates:      make(chan TaskUpdate, 8),
 		ExecuteTimer:         execTimer,
 		EvaulateTimer:        evalTimer,
 		Shutdown:             make(chan bool),
@@ -110,25 +116,34 @@ func (operator *TaskOperator) Operate() {
 				operator.Execute()
 
 			case update := <-operator.ExternalUpdates:
-				newName, hasNewName := update["name"].(string)
+				newName, hasNewName := update.Update["name"].(string)
 				if hasNewName {
 					operator.Task.Name = newName
 				}
 
-				newIsPaused, hasIsPaused := update["isPaused"].(bool)
+				newIsPaused, hasIsPaused := update.Update["isPaused"].(bool)
 				if hasIsPaused {
 					operator.Task.IsPaused = newIsPaused
 				}
 
-				newRunAfter, hasRunAfter := update["runAfter"].(time.Time)
+				newRunAfter, hasRunAfter := update.Update["runAfter"].(time.Time)
 				if hasRunAfter {
 					operator.Task.RunAfter = newRunAfter
 				}
 
-				// persist the change
-				operator.TaskGroup.Storage.SaveTask(operator.TaskGroup, operator.Task)
-
 				// TODO - handle additional fields
+
+				// persist the change
+				saveError := operator.TaskGroup.Storage.SaveTask(operator.TaskGroup, operator.Task)
+
+				// Let anyone waiting on the update (rest api) know that the update has been persisted
+				if update.UpdateComplete != nil {
+					select {
+					case update.UpdateComplete <- saveError:
+					default:
+						// Ignore no update complete listener...
+					}
+				}
 
 				// emit update event
 				operator.TaskGroup.Controller.ProcessTaskUpdate(TaskUpdateEvent{
@@ -370,8 +385,11 @@ func (operator *TaskOperator) Execute() {
 					childOp, found := operator.TaskGroup.TaskOperators[child.Id]
 					if found {
 						// Update runAfter for child
-						childOp.ExternalUpdates <- map[string]interface{}{
-							"runAfter": time.Now().Add(time.Duration(workerResponse.ChildrenDelayInSeconds * int(time.Second))),
+						childOp.ExternalUpdates <- TaskUpdate{
+							Update: map[string]interface{}{
+								"runAfter": time.Now().Add(time.Duration(workerResponse.ChildrenDelayInSeconds * int(time.Second))),
+							},
+							UpdateComplete: nil,
 						}
 					}
 				}
@@ -413,7 +431,7 @@ func (task *Task) CanExecute(taskGroup *TaskGroup) bool {
 	// - it has no remaining attempts
 	// - its task group is paused
 	// Note that we do not check runAfter here, task timing is handled by operator
-	if task.IsComplete || task.IsPaused || task.RemainingAttempts <= 0 || taskGroup.IsPaused {
+	if task.IsDeleting || task.IsComplete || task.IsPaused || task.RemainingAttempts <= 0 {
 		return false
 	}
 

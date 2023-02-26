@@ -19,14 +19,14 @@ func main() {
 	storage := crew.NewJsonFilesystemTaskStorage(cwd + "/main_demo")
 	client := crew.NewHttpPostClient()
 
-	taskGroupsOperator, bootstrapError := storage.Bootstrap(false, client)
+	taskGroupsOperator, bootstrapError := storage.Bootstrap(true, client)
 	if bootstrapError != nil {
 		panic(bootstrapError)
 	}
 
 	httpServerExitDone := &sync.WaitGroup{}
 	httpServerExitDone.Add(1)
-	srv := crew.ServeRestApi(httpServerExitDone, taskGroupsOperator)
+	srv := crew.ServeRestApi(httpServerExitDone, taskGroupsOperator, client)
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	go func() {

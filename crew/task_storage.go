@@ -34,6 +34,10 @@ func (storage *JsonFilesystemTaskStorage) TaskGroupPath(group *TaskGroup) string
 }
 
 func (storage *JsonFilesystemTaskStorage) SaveTask(group *TaskGroup, task *Task) (err error) {
+	if task.IsDeleting {
+		// Avoid re-creating a task that is getting deleted
+		return nil
+	}
 	taskJson, jsonErr := json.Marshal(task)
 	if jsonErr != nil {
 		return jsonErr
@@ -51,10 +55,17 @@ func (storage *JsonFilesystemTaskStorage) DeleteTask(group *TaskGroup, task *Tas
 		return nil
 	}
 	removeError := os.Remove(filePath)
+	if removeError != nil {
+		fmt.Println("JsonFilesystemTaskStorage.DeleteTask Error", removeError, filePath)
+	}
 	return removeError
 }
 
 func (storage *JsonFilesystemTaskStorage) SaveTaskGroup(group *TaskGroup) (err error) {
+	if group.IsDeleting {
+		// Avoid re-creating a group that is getting deleted
+		return nil
+	}
 	// Make sure task group dir exists
 	groupDir := storage.TaskGroupDir(group)
 	if _, err := os.Stat(groupDir); os.IsNotExist(err) {
@@ -87,7 +98,7 @@ func (storage *JsonFilesystemTaskStorage) DeleteTaskGroup(group *TaskGroup) (err
 }
 
 func (storage *JsonFilesystemTaskStorage) Bootstrap(shouldOperate bool, client TaskClient) (taskGroupController *TaskGroupController, err error) {
-	taskGroupController = NewTaskGroupController()
+	taskGroupController = NewTaskGroupController(storage)
 
 	entries, readDirError := os.ReadDir(storage.BasePath + "/task_groups")
 	if readDirError != nil {
@@ -203,7 +214,7 @@ func (storage *MemoryTaskStorage) DeleteTaskGroup(group *TaskGroup) (err error) 
 }
 
 func (storage *MemoryTaskStorage) Bootstrap(shouldOperate bool, client TaskClient) (taskGroupController *TaskGroupController, err error) {
-	controller := NewTaskGroupController()
+	controller := NewTaskGroupController(storage)
 	return controller, nil
 }
 

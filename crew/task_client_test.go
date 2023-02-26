@@ -446,7 +446,6 @@ func TestMultipleChildOutput(t *testing.T) {
 					wgChildren.Done()
 					childCompletionOrder = append(childCompletionOrder, event.Task.Id)
 				}
-				fmt.Println("~~ len(childCompletionOrder)", len(childCompletionOrder))
 				if len(childCompletionOrder) > 3 {
 					return
 				}

@@ -7,10 +7,11 @@ Note, use this to exclude from JSON `json:"-"` : https://pkg.go.dev/encoding/jso
 cd crew
 go test
 
-TODO : piping for WorkgroupDelays (FAN IN), TaskUpdates into bootstrap?
-TODO : postgres/firestore persistence
-TODO : Figure out good value for TaskUpdates channel queue size
+TODO : update godoc
+TODO : ensure task/group ids are url friendly?
 TODO : Implement API / Server Sent Events
+TODO : redis persistence : https://redis.com/blog/go-redis-official-redis-client/
+TODO : Figure out good value for TaskUpdates channel queue size
 TODO : Implement an (configurably optional) cleanup "cron" for removing old taskgroups
 
 Scaling Note:

@@ -26,18 +26,17 @@ type WorkgroupDelayEvent struct {
 type TaskGroup struct {
 	Id            string                   `json:"id"`
 	Name          string                   `json:"name"`
-	IsPaused      bool                     `json:"isPaused"`
 	CreatedAt     time.Time                `json:"createdAt"`
 	TaskOperators map[string]*TaskOperator `json:"-"` // `json:"tasks"`
 	Storage       TaskStorage              `json:"-"`
 	Controller    *TaskGroupController     `json:"-"`
+	IsDeleting    bool                     `json:"-"`
 }
 
 func NewTaskGroup(id string, name string, controller *TaskGroupController) *TaskGroup {
 	tg := TaskGroup{
 		Id:            id,
 		Name:          name,
-		IsPaused:      false,
 		CreatedAt:     time.Now(),
 		TaskOperators: make(map[string]*TaskOperator),
 		Storage:       NewMemoryTaskStorage(),
@@ -136,9 +135,11 @@ func (taskGroup *TaskGroup) DeleteTask(id string) error {
 	if !found {
 		return errors.New("cannot find task")
 	}
+	operator.Task.IsDeleting = true
 
 	// Task can only be deleted if it doesn't have any children
 	if len(operator.Task.Children) > 0 {
+		operator.Task.IsDeleting = false
 		return errors.New("cannot delete tasks with children")
 	}
 
@@ -176,9 +177,9 @@ func (taskGroup *TaskGroup) DeleteTask(id string) error {
 	delete(taskGroup.TaskOperators, operator.Task.Id)
 
 	// persist the change
-	taskGroup.Storage.DeleteTask(operator.TaskGroup, operator.Task)
+	fileDeleteErr := taskGroup.Storage.DeleteTask(operator.TaskGroup, operator.Task)
 
-	return nil
+	return fileDeleteErr
 }
 
 // Operate begins the lifecycle of every task in the group
@@ -192,51 +193,5 @@ func (taskGroup *TaskGroup) Operate() {
 func (taskGroup *TaskGroup) Shutdown() {
 	for _, operator := range taskGroup.TaskOperators {
 		operator.Shutdown <- true
-	}
-}
-
-type TaskGroupController struct {
-	TaskGroups map[string]*TaskGroup
-	// This is for sending updates to UI, all group and task create/update/delete events should get sent here:
-	TaskUpdates chan TaskUpdateEvent `json:"-"`
-}
-
-func NewTaskGroupController() *TaskGroupController {
-	op := TaskGroupController{
-		TaskGroups:  make(map[string]*TaskGroup),
-		TaskUpdates: make(chan TaskUpdateEvent, 8),
-	}
-	return &op
-}
-
-func (controller *TaskGroupController) DelayWorkgroup(workgroup string, delayInSeconds int, originTaskGroupId string) {
-	// send update to all tasks in all groups that match workgroup
-	for _, group := range controller.TaskGroups {
-		for _, task := range group.TaskOperators {
-			if task.Task.Workgroup == workgroup && !task.Task.IsComplete {
-				// Update runAfter for task
-				newRunAfter := time.Now().Add(time.Duration(delayInSeconds * int(time.Second)))
-				task.ExternalUpdates <- map[string]interface{}{
-					"runAfter": newRunAfter,
-				}
-			}
-		}
-	}
-}
-
-func (controller *TaskGroupController) AddGroup(group *TaskGroup) {
-	controller.TaskGroups[group.Id] = group
-}
-
-func (controller *TaskGroupController) Operate() {
-	for _, taskGroup := range controller.TaskGroups {
-		taskGroup.Operate()
-	}
-}
-
-func (controller *TaskGroupController) ProcessTaskUpdate(update TaskUpdateEvent) {
-	select {
-	case controller.TaskUpdates <- update:
-	default:
 	}
 }
