@@ -7,11 +7,9 @@ Note, use this to exclude from JSON `json:"-"` : https://pkg.go.dev/encoding/jso
 cd crew
 go test
 
-TODO : unit test for group reset / task reset
-TODO : API authentication
 TODO : update godoc
-TODO : ensure task/group ids are url friendly?
 TODO : Implement API / Server Sent Events
+TODO : API (configuranly optional) authentication
 TODO : redis persistence : https://redis.com/blog/go-redis-official-redis-client/
 TODO : Figure out good value for TaskUpdates channel queue size
 TODO : Implement an (configurably optional) cleanup "cron" for removing old taskgroups
