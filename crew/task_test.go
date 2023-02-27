@@ -35,7 +35,7 @@ func TestCanExecute(t *testing.T) {
 		Priority:          1,
 		ProgressWeight:    1,
 	}
-	taskGroupController := NewTaskGroupController()
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
 	group := NewTaskGroup("G10", "Test", taskGroupController)
 
 	group.AddTask(&task, &TaskTestClient{})
@@ -68,7 +68,7 @@ func TestCannotExecuteIfTaskIsPaused(t *testing.T) {
 		ParentIds:           make([]string, 0),
 		Children:            make([]*Task, 0),
 	}
-	taskGroupController := NewTaskGroupController()
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
 	group := NewTaskGroup("G11", "Test", taskGroupController)
 
 	canExecute := task.CanExecute(group)
@@ -106,7 +106,7 @@ func TestCannotExecuteIfParentsIncomplete(t *testing.T) {
 		ProgressWeight:    1,
 		ParentIds:         []string{"T12P"},
 	}
-	taskGroupController := NewTaskGroupController()
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
 	group := NewTaskGroup("G12", "Test", taskGroupController)
 	group.PreloadTasks([]*Task{&parent, &task}, &TaskTestClient{})
 
@@ -132,7 +132,7 @@ func TestCanUpdateTask(t *testing.T) {
 		ParentIds:         []string{"T1"},
 	}
 
-	taskGroupController := NewTaskGroupController()
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
 	group := NewTaskGroup("G13", "Test", taskGroupController)
 	group.PreloadTasks([]*Task{&task}, &TaskTestClient{})
 	group.Operate()
@@ -145,13 +145,65 @@ func TestCanUpdateTask(t *testing.T) {
 		wg.Done()
 	}()
 
-	group.TaskOperators[task.Id].ExternalUpdates <- map[string]interface{}{
-		"name": "New Name",
+	group.TaskOperators[task.Id].ExternalUpdates <- TaskUpdate{
+		Update: map[string]interface{}{
+			"name": "New Name",
+		},
+		UpdateComplete: nil,
 	}
 	wg.Wait()
 
 	if task.Name != "New Name" {
 		t.Fatalf(`Task.Name = %v, want %v`, task.Name, "New Name")
+	}
+
+	group.TaskOperators[task.Id].Shutdown <- true
+}
+
+func TestCanResetTask(t *testing.T) {
+	var errors []interface{}
+	errors = append(errors, "Internal server error")
+	originalRunAfter := time.Now().Add(-1 * time.Second)
+	task := Task{
+		Id:                "T21",
+		TaskGroupId:       "G21",
+		Name:              "Reset Task",
+		Worker:            "test",
+		Workgroup:         "",
+		Key:               "T21",
+		RemainingAttempts: 0,
+		IsPaused:          true,
+		IsComplete:        true,
+		Output:            map[string]interface{}{"ouput": "stuff"},
+		Errors:            errors,
+		Priority:          1,
+		ProgressWeight:    1,
+		RunAfter:          originalRunAfter,
+	}
+
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
+	group := NewTaskGroup("G21", "Test", taskGroupController)
+	group.PreloadTasks([]*Task{&task}, &TaskTestClient{})
+	group.Operate()
+
+	updateComplete := make(chan error)
+	group.TaskOperators["T21"].ResetTask(5, updateComplete)
+	<-updateComplete
+
+	if task.IsComplete != false {
+		t.Fatalf(`Task.IsComplete = %v, want %v`, task.IsComplete, false)
+	}
+	if task.RemainingAttempts != 5 {
+		t.Fatalf(`Task.RemainingAttempts = %v, want %v`, task.RemainingAttempts, 5)
+	}
+	if task.Output != nil {
+		t.Fatalf(`Task.Output = %v, want %v`, task.Output, nil)
+	}
+	if len(task.Errors) != 0 {
+		t.Fatalf(`len(task.Errors) = %v, want %v`, len(task.Errors), 0)
+	}
+	if !task.RunAfter.After(originalRunAfter) {
+		t.Fatalf("Task RunAfter was not reset")
 	}
 
 	group.TaskOperators[task.Id].Shutdown <- true

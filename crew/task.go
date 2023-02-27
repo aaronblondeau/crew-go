@@ -131,6 +131,31 @@ func (operator *TaskOperator) Operate() {
 					operator.Task.RunAfter = newRunAfter
 				}
 
+				newIsComplete, hasIsComplete := update.Update["isComplete"].(bool)
+				if hasIsComplete {
+					operator.Task.IsComplete = newIsComplete
+				}
+
+				newRemainingAttempts, hasRemainingAttempts := update.Update["remainingAttempts"].(int)
+				if hasRemainingAttempts {
+					operator.Task.RemainingAttempts = newRemainingAttempts
+				}
+
+				newInput, hasInput := update.Update["input"]
+				if hasInput {
+					operator.Task.Input = newInput
+				}
+
+				newOutput, hasOutput := update.Update["output"]
+				if hasOutput {
+					operator.Task.Output = newOutput
+				}
+
+				newErrors, hasErrors := update.Update["errors"].([]interface{})
+				if hasErrors {
+					operator.Task.Errors = newErrors
+				}
+
 				// TODO - handle additional fields
 
 				// persist the change
@@ -240,6 +265,21 @@ func (operator *TaskOperator) CancelEvaluate() {
 		case <-operator.EvaulateTimer.C:
 		default:
 		}
+	}
+}
+
+// ResetTask modifies the state of a task as if it has never been executed.
+// Does not change IsPaused.
+func (operator *TaskOperator) ResetTask(remainingAttempts int, updateComplete chan error) {
+	operator.ExternalUpdates <- TaskUpdate{
+		Update: map[string]interface{}{
+			"remainingAttempts": remainingAttempts,
+			"isComplete":        false,
+			"output":            nil,
+			"errors":            make([]interface{}, 0),
+			"runAfter":          time.Now(),
+		},
+		UpdateComplete: updateComplete,
 	}
 }
 

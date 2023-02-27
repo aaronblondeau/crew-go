@@ -26,7 +26,7 @@ func TestStoreTaskGroup(t *testing.T) {
 	cwd, _ := os.Getwd()
 	storage := NewJsonFilesystemTaskStorage(cwd + "/test_storage")
 
-	taskGroupController := NewTaskGroupController()
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
 	group := NewTaskGroup("GS1", "Test storage", taskGroupController)
 	group.Storage = storage
 
@@ -40,7 +40,7 @@ func TestStoreTaskGroupAndTask(t *testing.T) {
 	cwd, _ := os.Getwd()
 	storage := NewJsonFilesystemTaskStorage(cwd + "/test_storage")
 
-	taskGroupController := NewTaskGroupController()
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
 	group := NewTaskGroup("GS2", "Test storage", taskGroupController)
 	group.Storage = storage
 
@@ -94,9 +94,6 @@ func TestBootstrap(t *testing.T) {
 	if taskGroupController.TaskGroups["BSG1"].Name != "Storage bootstrap test 1" {
 		t.Fatalf(`taskGroupController.TaskGroups["BSG1"].Name = %v, want "Storage bootstrap test 1"`, taskGroupController.TaskGroups["BSG1"].Name)
 	}
-	if taskGroupController.TaskGroups["BSG1"].IsPaused != false {
-		t.Fatalf(`taskGroupController.TaskGroups["BSG1"].IsPaused = %v, want false`, taskGroupController.TaskGroups["BSG1"].IsPaused)
-	}
 	if taskGroupController.TaskGroups["BSG1"].CreatedAt.Year() != 2023 {
 		t.Fatalf(`taskGroupController.TaskGroups["BSG1"].CreatedAt.Year() = %v, want 2023`, taskGroupController.TaskGroups["BSG1"].CreatedAt.Year())
 	}
@@ -117,7 +114,7 @@ func TestDeleteTask(t *testing.T) {
 	cwd, _ := os.Getwd()
 	storage := NewJsonFilesystemTaskStorage(cwd + "/test_storage")
 
-	taskGroupController := NewTaskGroupController()
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
 	group := NewTaskGroup("GS3", "Test storage", taskGroupController)
 	group.Storage = storage
 
@@ -174,7 +171,7 @@ func TestDeleteTaskGroup(t *testing.T) {
 	cwd, _ := os.Getwd()
 	storage := NewJsonFilesystemTaskStorage(cwd + "/test_storage")
 
-	taskGroupController := NewTaskGroupController()
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
 	group := NewTaskGroup("GS4", "Test storage", taskGroupController)
 	group.Storage = storage
 

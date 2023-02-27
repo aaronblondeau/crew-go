@@ -225,24 +225,156 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			"deleted": true,
 		})
 	})
-	// e.POST("/api/v1/task_group/:task_group_id/reset", func(c echo.Context) error {
-	// 	// Reset a task group.  If the group has seed tasks, all non-seed tasks are removed.  Then all remaining tasks within the group are reset.
-	// })
-	// e.POST("/api/v1/task_group/:task_group_id/retry", func(c echo.Context) error {
-	// 	// Force a retry of all incomplete tasks in a task group by incrementing their remainingAttempts value. (will require code in ExternalUpdates to process remainingAttempts in update)
-	// })
-	// e.POST("/api/v1/task_group/:task_group_id/pause", func(c echo.Context) error {
-	// 	// Pause all tasks in group, fan-in updates?
-	// })
-	// e.POST("/api/v1/task_group/:task_group_id/resume", func(c echo.Context) error {
-	// 	// Resume all tasks in group, fan-in updates?
-	// })
-	// e.POST("/api/v1/task_group/:task_group_id/task/:task_id/reset", func(c echo.Context) error {
-	// 	// Reset a task as if it had never been run.  Reject if BusyExecuting.
-	// })
-	// e.POST("/api/v1/task_group/:task_group_id/task/:task_id/retry", func(c echo.Context) error {
-	// 	// Force a retry of a task by incrementing its remainingAttempts value. (will require code in ExternalUpdates to process remainingAttempts in update)
-	// })
+	e.POST("/api/v1/task_group/:task_group_id/reset", func(c echo.Context) error {
+		// Reset a task group.  If the group has seed tasks, all non-seed tasks are removed.  Then all remaining tasks within the group are reset.
+		taskGroupId := c.Param("task_group_id")
+		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
+		if !groupFound {
+			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
+		}
+
+		remainingAttempts := 5
+		body := make(map[string]interface{})
+		parseErr := json.NewDecoder(c.Request().Body).Decode(&body)
+		if parseErr == nil {
+			bodyRemainingAttempts, found := body["remainingAttempts"]
+			if found {
+				remainingAttempts = int(bodyRemainingAttempts.(float64))
+			}
+		}
+
+		resetErr := group.Reset(remainingAttempts, nil)
+		if resetErr != nil {
+			return c.String(http.StatusBadRequest, resetErr.Error())
+		}
+		return c.JSON(http.StatusOK, group)
+	})
+	e.POST("/api/v1/task_group/:task_group_id/retry", func(c echo.Context) error {
+		// Force a retry of all incomplete tasks in a task group by incrementing their remainingAttempts value.
+		taskGroupId := c.Param("task_group_id")
+		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
+		if !groupFound {
+			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
+		}
+
+		remainingAttempts := 5
+		body := make(map[string]interface{})
+		parseErr := json.NewDecoder(c.Request().Body).Decode(&body)
+		if parseErr == nil {
+			bodyRemainingAttempts, found := body["remainingAttempts"]
+			if found {
+				remainingAttempts = int(bodyRemainingAttempts.(float64))
+			}
+		}
+
+		err := group.RetryAllTasks(remainingAttempts)
+		if err != nil {
+			return c.String(http.StatusBadRequest, err.Error())
+		}
+		return c.JSON(http.StatusOK, group)
+	})
+	e.POST("/api/v1/task_group/:task_group_id/pause", func(c echo.Context) error {
+		// Pause all tasks in group, fan-in updates?
+		taskGroupId := c.Param("task_group_id")
+		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
+		if !groupFound {
+			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
+		}
+
+		err := group.PauseAllTasks()
+		if err != nil {
+			return c.String(http.StatusBadRequest, err.Error())
+		}
+		return c.JSON(http.StatusOK, group)
+	})
+	e.POST("/api/v1/task_group/:task_group_id/resume", func(c echo.Context) error {
+		// Resume all tasks in group, fan-in updates?
+		taskGroupId := c.Param("task_group_id")
+		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
+		if !groupFound {
+			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
+		}
+
+		err := group.UnPauseAllTasks()
+		if err != nil {
+			return c.String(http.StatusBadRequest, err.Error())
+		}
+		return c.JSON(http.StatusOK, group)
+	})
+	e.POST("/api/v1/task_group/:task_group_id/task/:task_id/reset", func(c echo.Context) error {
+		// Reset a task as if it had never been run.  Reject if BusyExecuting.
+		taskGroupId := c.Param("task_group_id")
+		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
+		if !groupFound {
+			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
+		}
+
+		taskId := c.Param("task_id")
+		operator, taskFound := group.TaskOperators[taskId]
+		if !taskFound {
+			return c.String(http.StatusNotFound, fmt.Sprintf("Task with id %v not found in group %v.", taskId, taskGroupId))
+		}
+		if operator.Task.BusyExecuting {
+			return c.String(http.StatusConflict, "Task is busy executing, cannot update.")
+		}
+
+		remainingAttempts := 5
+		body := make(map[string]interface{})
+		parseErr := json.NewDecoder(c.Request().Body).Decode(&body)
+		if parseErr == nil {
+			bodyRemainingAttempts, found := body["remainingAttempts"]
+			if found {
+				remainingAttempts = int(bodyRemainingAttempts.(float64))
+			}
+		}
+
+		updateComplete := make(chan error)
+		operator.ResetTask(remainingAttempts, updateComplete)
+		updateError := <-updateComplete
+		if updateError != nil {
+			return c.String(http.StatusBadRequest, updateError.Error())
+		}
+		return c.JSON(http.StatusOK, operator.Task)
+	})
+	e.POST("/api/v1/task_group/:task_group_id/task/:task_id/retry", func(c echo.Context) error {
+		// Force a retry of a task by updating its remainingAttempts value.
+		taskGroupId := c.Param("task_group_id")
+		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
+		if !groupFound {
+			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
+		}
+
+		taskId := c.Param("task_id")
+		operator, taskFound := group.TaskOperators[taskId]
+		if !taskFound {
+			return c.String(http.StatusNotFound, fmt.Sprintf("Task with id %v not found in group %v.", taskId, taskGroupId))
+		}
+		if operator.Task.BusyExecuting {
+			return c.String(http.StatusConflict, "Task is busy executing, cannot update.")
+		}
+
+		remainingAttempts := 5
+		body := make(map[string]interface{})
+		parseErr := json.NewDecoder(c.Request().Body).Decode(&body)
+		if parseErr == nil {
+			bodyRemainingAttempts, found := body["remainingAttempts"]
+			if found {
+				remainingAttempts = int(bodyRemainingAttempts.(float64))
+			}
+		}
+
+		updateComplete := make(chan error)
+		operator.ExternalUpdates <- TaskUpdate{
+			Update:         map[string]interface{}{"remainingAttempts": remainingAttempts},
+			UpdateComplete: updateComplete,
+		}
+		updateError := <-updateComplete
+		if updateError != nil {
+			return c.String(http.StatusBadRequest, updateError.Error())
+		}
+
+		return c.JSON(http.StatusOK, operator.Task)
+	})
 	e.PUT("/api/v1/task_group/:task_group_id", func(c echo.Context) error {
 		// Update a task group
 		taskGroupId := c.Param("task_group_id")

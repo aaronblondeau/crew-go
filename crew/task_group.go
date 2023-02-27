@@ -195,3 +195,87 @@ func (taskGroup *TaskGroup) Shutdown() {
 		operator.Shutdown <- true
 	}
 }
+
+// Reset returns the task group to its pre-execution state.
+func (taskGroup *TaskGroup) Reset(remainingAttempts int, updateComplete chan error) error {
+	// If there are seed tasks, then delete all non-seed tasks, and reset seed tasks
+	// If there are no seed tasks, then reset all tasks
+
+	hasSeedTasks := false
+	for _, operator := range taskGroup.TaskOperators {
+		if operator.Task.IsSeed {
+			hasSeedTasks = true
+			break
+		}
+	}
+
+	if hasSeedTasks {
+		// Remove all non-seed tasks
+		deletedTasks := 1
+		for deletedTasks > 0 {
+			deletedTasks = 0
+			for _, operator := range taskGroup.TaskOperators {
+				if !operator.Task.IsSeed && len(operator.Task.Children) == 0 {
+					taskGroup.DeleteTask(operator.Task.Id)
+					deletedTasks++
+				}
+			}
+		}
+	}
+
+	// Reset remaining tasks
+	hasCleanupError := false
+	for _, operator := range taskGroup.TaskOperators {
+		operator.ResetTask(remainingAttempts, updateComplete)
+
+		if hasSeedTasks && !operator.Task.IsSeed {
+			hasCleanupError = true
+		}
+	}
+	if hasCleanupError {
+		return errors.New("unable to reset task hierarchy - found non-seed tasks after clean cycle")
+	}
+	return nil
+}
+
+func (taskGroup *TaskGroup) UpdateAllTasks(update map[string]interface{}) error {
+	for _, op := range taskGroup.TaskOperators {
+		updateComplete := make(chan error)
+		op.ExternalUpdates <- TaskUpdate{
+			Update:         update,
+			UpdateComplete: updateComplete,
+		}
+		// TODO, can we find a way to allow all updates to happen in parallel?
+		err := <-updateComplete
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (taskGroup *TaskGroup) RetryAllTasks(remainingAttempts int) error {
+	for _, op := range taskGroup.TaskOperators {
+		if !op.Task.IsComplete {
+			updateComplete := make(chan error)
+			op.ExternalUpdates <- TaskUpdate{
+				Update:         map[string]interface{}{"remainingAttempts": remainingAttempts},
+				UpdateComplete: updateComplete,
+			}
+			// TODO, can we find a way to allow all updates to happen in parallel?
+			err := <-updateComplete
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (taskGroup *TaskGroup) PauseAllTasks() error {
+	return taskGroup.UpdateAllTasks(map[string]interface{}{"isPaused": true})
+}
+
+func (taskGroup *TaskGroup) UnPauseAllTasks() error {
+	return taskGroup.UpdateAllTasks(map[string]interface{}{"isPaused": false})
+}

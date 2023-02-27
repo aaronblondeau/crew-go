@@ -7,6 +7,8 @@ Note, use this to exclude from JSON `json:"-"` : https://pkg.go.dev/encoding/jso
 cd crew
 go test
 
+TODO : unit test for group reset / task reset
+TODO : API authentication
 TODO : update godoc
 TODO : ensure task/group ids are url friendly?
 TODO : Implement API / Server Sent Events

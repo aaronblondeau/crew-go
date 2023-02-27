@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 )
 
 type TaskGroupTestClient struct{}
@@ -50,7 +51,7 @@ func TestPrepareInflatesChildren(t *testing.T) {
 		ProgressWeight:    1,
 		ParentIds:         []string{"T7A"},
 	}
-	taskGroupController := NewTaskGroupController()
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
 	group := NewTaskGroup("G7", "Test", taskGroupController)
 	group.PreloadTasks([]*Task{&parent, &task}, &TaskGroupTestClient{})
 
@@ -74,7 +75,7 @@ func TestCanDeleteTask(t *testing.T) {
 		ProgressWeight:    1,
 		ParentIds:         []string{},
 	}
-	taskGroupController := NewTaskGroupController()
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
 	group := NewTaskGroup("G8", "Test", taskGroupController)
 	group.PreloadTasks([]*Task{&task}, &TaskGroupTestClient{})
 	// group.Operate()
@@ -107,7 +108,7 @@ func TestCanAddTask(t *testing.T) {
 		ParentIds:      []string{},
 	}
 
-	taskGroupController := NewTaskGroupController()
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
 	group := NewTaskGroup("G9", "Test", taskGroupController)
 
 	if len(group.TaskOperators) != 0 {
@@ -138,8 +139,11 @@ func TestCanAddTask(t *testing.T) {
 	}
 
 	// Unpause the task
-	group.TaskOperators[task.Id].ExternalUpdates <- map[string]interface{}{
-		"isPaused": false,
+	group.TaskOperators[task.Id].ExternalUpdates <- TaskUpdate{
+		Update: map[string]interface{}{
+			"isPaused": false,
+		},
+		UpdateComplete: nil,
 	}
 
 	// Wait for task to complete
@@ -148,4 +152,174 @@ func TestCanAddTask(t *testing.T) {
 	if task.IsComplete != true {
 		t.Fatalf(`Task.IsComplete = %v, want true`, task.IsComplete)
 	}
+}
+
+func TestCanResetTaskGroupNoSeeds(t *testing.T) {
+	var errors []interface{}
+	errors = append(errors, "Internal server error")
+	originalRunAfter := time.Now().Add(-1 * time.Second)
+	task := Task{
+		Id:                "T22",
+		TaskGroupId:       "G22",
+		Name:              "Reset Task",
+		Worker:            "test",
+		Workgroup:         "",
+		Key:               "T22",
+		RemainingAttempts: 0,
+		IsPaused:          true,
+		IsComplete:        true,
+		IsSeed:            false,
+		Output:            map[string]interface{}{"ouput": "stuff"},
+		Errors:            errors,
+		Priority:          1,
+		ProgressWeight:    1,
+		RunAfter:          originalRunAfter,
+	}
+
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
+	group := NewTaskGroup("G22", "Test", taskGroupController)
+	group.PreloadTasks([]*Task{&task}, &TaskTestClient{})
+	group.Operate()
+
+	updateComplete := make(chan error)
+	group.Reset(5, updateComplete)
+	<-updateComplete
+
+	if task.IsComplete != false {
+		t.Fatalf(`Task.IsComplete = %v, want %v`, task.IsComplete, false)
+	}
+	if task.RemainingAttempts != 5 {
+		t.Fatalf(`Task.RemainingAttempts = %v, want %v`, task.RemainingAttempts, 5)
+	}
+	if task.Output != nil {
+		t.Fatalf(`Task.Output = %v, want %v`, task.Output, nil)
+	}
+	if len(task.Errors) != 0 {
+		t.Fatalf(`len(task.Errors) = %v, want %v`, len(task.Errors), 0)
+	}
+	if !task.RunAfter.After(originalRunAfter) {
+		t.Fatalf("Task RunAfter was not reset")
+	}
+
+	group.TaskOperators[task.Id].Shutdown <- true
+}
+
+func TestCanResetTaskGroupWithSeeds(t *testing.T) {
+	task1 := Task{
+		Id:                "T23A",
+		TaskGroupId:       "G23",
+		Name:              "Reset Task",
+		Worker:            "test",
+		Workgroup:         "",
+		Key:               "T23A",
+		RemainingAttempts: 0,
+		IsPaused:          true,
+		IsComplete:        true,
+		IsSeed:            true,
+		Priority:          1,
+		ProgressWeight:    1,
+	}
+
+	task2 := Task{
+		Id:                "T23B",
+		TaskGroupId:       "G23",
+		Name:              "Reset Task",
+		Worker:            "test",
+		Workgroup:         "",
+		Key:               "T23B",
+		RemainingAttempts: 0,
+		IsPaused:          true,
+		IsComplete:        true,
+		IsSeed:            false,
+		Priority:          1,
+		ProgressWeight:    1,
+		ParentIds:         []string{"T23A"},
+	}
+
+	task3 := Task{
+		Id:                "T23C",
+		TaskGroupId:       "G23",
+		Name:              "Reset Task",
+		Worker:            "test",
+		Workgroup:         "",
+		Key:               "T23C",
+		RemainingAttempts: 0,
+		IsPaused:          true,
+		IsComplete:        true,
+		IsSeed:            false,
+		Priority:          1,
+		ProgressWeight:    1,
+		ParentIds:         []string{"T23B"},
+	}
+
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
+	group := NewTaskGroup("G23", "Test", taskGroupController)
+	group.PreloadTasks([]*Task{&task1, &task2, &task3}, &TaskTestClient{})
+	group.Operate()
+
+	updateComplete := make(chan error)
+	group.Reset(5, updateComplete)
+	<-updateComplete
+
+	if len(group.TaskOperators) != 1 {
+		t.Fatalf(`len(group.TaskOperators) = %v, want %v`, len(group.TaskOperators), 1)
+	}
+	for _, op := range group.TaskOperators {
+		if op.Task.Id != "T23A" {
+			t.Fatalf(`op.Task.Id = %v, want %v`, op.Task.Id, "T23A")
+		}
+	}
+	if task1.IsComplete != false {
+		t.Fatalf(`task1.IsComplete = %v, want %v`, task1.IsComplete, false)
+	}
+
+	group.Shutdown()
+}
+
+func TestCanPauseAllTasks(t *testing.T) {
+	task1 := Task{
+		Id:                "T24A",
+		TaskGroupId:       "G24",
+		Name:              "Reset Task",
+		Worker:            "test",
+		Workgroup:         "",
+		Key:               "T24A",
+		RemainingAttempts: 0,
+		IsPaused:          false,
+		IsComplete:        true,
+		IsSeed:            true,
+		Priority:          1,
+		ProgressWeight:    1,
+	}
+
+	task2 := Task{
+		Id:                "T24B",
+		TaskGroupId:       "G24",
+		Name:              "Reset Task",
+		Worker:            "test",
+		Workgroup:         "",
+		Key:               "T24B",
+		RemainingAttempts: 0,
+		IsPaused:          false,
+		IsComplete:        true,
+		IsSeed:            false,
+		Priority:          1,
+		ProgressWeight:    1,
+		ParentIds:         []string{"T24A"},
+	}
+
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
+	group := NewTaskGroup("G24", "Test", taskGroupController)
+	group.PreloadTasks([]*Task{&task1, &task2}, &TaskTestClient{})
+	group.Operate()
+
+	group.UnPauseAllTasks()
+
+	for _, op := range group.TaskOperators {
+		if op.Task.IsPaused != false {
+			t.Fatalf(`op.Task.IsPaused = %v, want %v`, op.Task.IsPaused, false)
+		}
+	}
+
+	group.Shutdown()
 }

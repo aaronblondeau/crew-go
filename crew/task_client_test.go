@@ -108,7 +108,7 @@ func TestTaskInvokesClientPost(t *testing.T) {
 		ProgressWeight: 1,
 		ParentIds:      []string{},
 	}
-	taskGroupController := NewTaskGroupController()
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
 	group := NewTaskGroup("G1", "Test", taskGroupController)
 
 	if len(group.TaskOperators) != 0 {
@@ -162,7 +162,7 @@ func TestCaptureError(t *testing.T) {
 		ProgressWeight: 1,
 		ParentIds:      []string{},
 	}
-	taskGroupController := NewTaskGroupController()
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
 	group := NewTaskGroup("G2", "Test", taskGroupController)
 
 	if len(group.TaskOperators) != 0 {
@@ -218,7 +218,7 @@ func TestErrorOnceThenSucceed(t *testing.T) {
 		ParentIds:           []string{},
 		ErrorDelayInSeconds: 1.0,
 	}
-	taskGroupController := NewTaskGroupController()
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
 	group := NewTaskGroup("G3", "Test", taskGroupController)
 
 	if len(group.TaskOperators) != 0 {
@@ -289,7 +289,7 @@ func TestSingleChildOutput(t *testing.T) {
 		ProgressWeight: 1,
 		ParentIds:      []string{},
 	}
-	taskGroupController := NewTaskGroupController()
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
 	group := NewTaskGroup("G4", "Test", taskGroupController)
 
 	if len(group.TaskOperators) != 0 {
@@ -421,7 +421,7 @@ func TestMultipleChildOutput(t *testing.T) {
 		ProgressWeight: 1,
 		ParentIds:      []string{"T5C2A", "T5C2B"},
 	}
-	taskGroupController := NewTaskGroupController()
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
 	group := NewTaskGroup("G5", "Test", taskGroupController)
 
 	if len(group.TaskOperators) != 0 {
@@ -548,7 +548,7 @@ func TestBadChildrenOutput(t *testing.T) {
 		ProgressWeight: 1,
 		ParentIds:      []string{"CX"},
 	}
-	taskGroupController := NewTaskGroupController()
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
 	group := NewTaskGroup("G6", "Test", taskGroupController)
 
 	if len(group.TaskOperators) != 0 {
@@ -632,7 +632,7 @@ func TestWorkgroupDelayInSecondsOutput(t *testing.T) {
 		ParentIds:      []string{},
 		RunAfter:       time.Time{},
 	}
-	taskGroupController := NewTaskGroupController()
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
 	group := NewTaskGroup("G14", "Test", taskGroupController)
 	taskGroupController.AddGroup(group)
 
@@ -741,7 +741,7 @@ func TestChildrenDelayInSecondsSecondsOutput(t *testing.T) {
 		ProgressWeight: 1,
 		ParentIds:      []string{},
 	}
-	taskGroupController := NewTaskGroupController()
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
 	group := NewTaskGroup("G15", "Test", taskGroupController)
 	taskGroupController.AddGroup(group)
 
