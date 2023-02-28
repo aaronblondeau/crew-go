@@ -7,17 +7,21 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 )
 
 func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, taskClient TaskClient) *http.Server {
 	e := echo.New()
-	e.GET("/", func(c echo.Context) error {
-		return c.String(http.StatusOK, "Hello, World!")
-	})
+	e.Use(middleware.CORS())
+	e.Static("/", "crew-go-ui/dist/spa")
+	// e.GET("/", func(c echo.Context) error {
+	// 	return c.String(http.StatusOK, "Hello, World!")
+	// })
 	e.GET("/healthz", func(c echo.Context) error {
 		return c.String(http.StatusOK, "Healthy!")
 	})
@@ -30,17 +34,27 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			}
 		}
 		page_size := 20
-		if c.QueryParams().Has("page_size") {
-			qpage_size, err := strconv.Atoi(c.QueryParam("page_size"))
+		if c.QueryParams().Has("pageSize") {
+			qpage_size, err := strconv.Atoi(c.QueryParam("pageSize"))
 			if err == nil {
 				page_size = qpage_size
 			}
 		}
+		search := ""
+		if c.QueryParams().Has("search") {
+			search = c.QueryParam("search")
+		}
 
-		// create an all groups slice
+		// create an all groups slice (while performing search)
 		groups := make([]*TaskGroup, 0)
 		for _, group := range taskGroupController.TaskGroups {
-			groups = append(groups, group)
+			if search != "" {
+				if strings.Contains(strings.ToLower(group.Name), strings.ToLower(search)) {
+					groups = append(groups, group)
+				}
+			} else {
+				groups = append(groups, group)
+			}
 		}
 
 		// sort all groups slice
@@ -67,8 +81,8 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 		sliced := groups[slice_start:slice_end]
 
 		return c.JSON(http.StatusOK, map[string]interface{}{
-			"task_groups": sliced,
-			"count":       slice_count,
+			"taskGroups": sliced,
+			"count":      slice_count,
 		})
 	})
 	e.GET("/api/v1/task_group/:id", func(c echo.Context) error {
@@ -88,8 +102,8 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			}
 		}
 		page_size := 20
-		if c.QueryParams().Has("page_size") {
-			qpage_size, err := strconv.Atoi(c.QueryParam("page_size"))
+		if c.QueryParams().Has("pageSize") {
+			qpage_size, err := strconv.Atoi(c.QueryParam("pageSize"))
 			if err == nil {
 				page_size = qpage_size
 			}
@@ -151,12 +165,12 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 	e.POST("/api/v1/task_groups", func(c echo.Context) error {
 		// Create a task group
 		group := NewTaskGroup("", "", taskGroupController)
-		if group.Id == "" {
-			group.Id = uuid.New().String()
-		}
 		inflate_err := json.NewDecoder(c.Request().Body).Decode(&group)
 		if inflate_err != nil {
 			return c.String(http.StatusBadRequest, inflate_err.Error())
+		}
+		if group.Id == "" {
+			group.Id = uuid.New().String()
 		}
 		group_add_err := taskGroupController.AddGroup(group)
 		if group_add_err != nil {
