@@ -30,6 +30,10 @@ export const useTaskGroupStore = defineStore('taskGroup', {
       })
       return result.data
     },
+    async getTaskGroup (id: string) : Promise<TaskGroup> {
+      const result = await api.get(`api/v1/task_group/${id}`)
+      return result.data
+    },
     async updateTaskGroup (id: string, payload: {name: string}) : Promise<TaskGroup> {
       const result = await api.put(`api/v1/task_group/${id}`, payload)
       return result.data
@@ -40,6 +44,9 @@ export const useTaskGroupStore = defineStore('taskGroup', {
         name
       })
       return result.data
+    },
+    async deleteTaskGroup (id: string) {
+      await api.delete(`api/v1/task_group/${id}`)
     }
   }
 })

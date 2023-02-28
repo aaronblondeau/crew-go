@@ -16,7 +16,7 @@
           v-model="id"
           type="text"
           label="Id"
-          hint="If left blank a uniqid will be used."
+          :hint="props.taskGroup ? 'Id cannot be changed' : 'If left blank a uniqid will be used.'"
           class="q-mt-sm"
           autofocus
           :readonly="!!props.taskGroup"

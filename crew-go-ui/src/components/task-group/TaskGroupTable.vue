@@ -50,7 +50,8 @@
       <template v-slot:body="props">
         <q-tr :props="props" valign="top">
           <q-td key="id" :props="props">
-            <q-btn icon="content_copy" size="sm" @click="toClipboard('Id', props.row.id)" :label="props.row.id" />
+            <q-btn flat icon="content_copy" size="sm" @click="toClipboard('Id', props.row.id)" />
+            <router-link :to="{ name: 'task_group', params: {taskGroupId: props.row.id }}">{{ props.row.id }}</router-link>
           </q-td>
 
           <q-td key="name" :props="props">
@@ -113,7 +114,7 @@ const columns : QTableProps['columns'] = [
     name: 'id',
     field: 'id',
     label: 'Id',
-    align: 'center'
+    align: 'left'
   },
   {
     name: 'name',

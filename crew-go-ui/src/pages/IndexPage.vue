@@ -5,5 +5,5 @@
 </template>
 
 <script setup lang="ts">
-import TaskGroupTable from 'src/components/TaskGroupTable.vue'
+import TaskGroupTable from 'src/components/task-group/TaskGroupTable.vue'
 </script>
