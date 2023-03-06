@@ -36,7 +36,6 @@ func TestSuccessResponse(t *testing.T) {
 		RemainingAttempts: 5,
 		IsPaused:          false,
 		IsComplete:        false,
-		Priority:          1,
 		ProgressWeight:    1,
 		ParentIds:         []string{},
 	}
@@ -94,7 +93,6 @@ func TestHttpErrorResponse(t *testing.T) {
 		RemainingAttempts: 5,
 		IsPaused:          false,
 		IsComplete:        false,
-		Priority:          1,
 		ProgressWeight:    1,
 		ParentIds:         []string{},
 	}
@@ -137,7 +135,6 @@ func TestErrorResponse(t *testing.T) {
 		RemainingAttempts: 5,
 		IsPaused:          false,
 		IsComplete:        false,
-		Priority:          1,
 		ProgressWeight:    1,
 		ParentIds:         []string{},
 	}
@@ -217,7 +214,6 @@ func TestParentDataInPayload(t *testing.T) {
 		RemainingAttempts: 4,
 		IsPaused:          false,
 		IsComplete:        true,
-		Priority:          1,
 		ProgressWeight:    1,
 		ParentIds:         []string{},
 		Input:             map[string]int{"in": 42},
@@ -234,7 +230,6 @@ func TestParentDataInPayload(t *testing.T) {
 		RemainingAttempts: 5,
 		IsPaused:          false,
 		IsComplete:        false,
-		Priority:          1,
 		ProgressWeight:    1,
 		ParentIds:         []string{"T19P"},
 	}
@@ -278,7 +273,6 @@ func TestChildrenResponse(t *testing.T) {
 		RemainingAttempts: 5,
 		IsPaused:          false,
 		IsComplete:        false,
-		Priority:          1,
 		ProgressWeight:    1,
 		ParentIds:         []string{},
 	}

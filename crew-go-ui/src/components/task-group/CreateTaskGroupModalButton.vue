@@ -13,9 +13,9 @@ import { TaskGroup } from 'src/stores/task-group-store'
 
 const emit = defineEmits(['onCreate'])
 
-function onCreate (project: TaskGroup) {
+function onCreate (taskGroup: TaskGroup) {
   showCreateDialog.value = false
-  emit('onCreate', project)
+  emit('onCreate', taskGroup)
 }
 
 const showCreateDialog = ref(false)

@@ -104,7 +104,6 @@ func TestTaskInvokesClientPost(t *testing.T) {
 		// Start task as paused
 		IsPaused:       false,
 		IsComplete:     false,
-		Priority:       1,
 		ProgressWeight: 1,
 		ParentIds:      []string{},
 	}
@@ -158,7 +157,6 @@ func TestCaptureError(t *testing.T) {
 		// Start task as paused
 		IsPaused:       false,
 		IsComplete:     false,
-		Priority:       1,
 		ProgressWeight: 1,
 		ParentIds:      []string{},
 	}
@@ -213,7 +211,6 @@ func TestErrorOnceThenSucceed(t *testing.T) {
 		// Start task as paused
 		IsPaused:            false,
 		IsComplete:          false,
-		Priority:            1,
 		ProgressWeight:      1,
 		ParentIds:           []string{},
 		ErrorDelayInSeconds: 1.0,
@@ -269,7 +266,6 @@ func TestSingleChildOutput(t *testing.T) {
 		// Start task as paused
 		IsPaused:       false,
 		IsComplete:     false,
-		Priority:       1,
 		ProgressWeight: 1,
 		ParentIds:      []string{},
 	}
@@ -285,7 +281,6 @@ func TestSingleChildOutput(t *testing.T) {
 		// Start task as paused
 		IsPaused:       false,
 		IsComplete:     false,
-		Priority:       1,
 		ProgressWeight: 1,
 		ParentIds:      []string{},
 	}
@@ -353,7 +348,6 @@ func TestMultipleChildOutput(t *testing.T) {
 		// Start task as paused
 		IsPaused:       false,
 		IsComplete:     false,
-		Priority:       1,
 		ProgressWeight: 1,
 		ParentIds:      []string{},
 	}
@@ -369,7 +363,6 @@ func TestMultipleChildOutput(t *testing.T) {
 		// Start task as paused
 		IsPaused:       false,
 		IsComplete:     false,
-		Priority:       1,
 		ProgressWeight: 1,
 		ParentIds:      []string{},
 	}
@@ -385,7 +378,6 @@ func TestMultipleChildOutput(t *testing.T) {
 		// Start task as paused
 		IsPaused:       false,
 		IsComplete:     false,
-		Priority:       1,
 		ProgressWeight: 1,
 		ParentIds:      []string{"T5C1"},
 	}
@@ -401,7 +393,6 @@ func TestMultipleChildOutput(t *testing.T) {
 		// Start task as paused
 		IsPaused:       false,
 		IsComplete:     false,
-		Priority:       1,
 		ProgressWeight: 1,
 		ParentIds:      []string{"T5C1"},
 	}
@@ -417,7 +408,6 @@ func TestMultipleChildOutput(t *testing.T) {
 		// Start task as paused
 		IsPaused:       false,
 		IsComplete:     false,
-		Priority:       1,
 		ProgressWeight: 1,
 		ParentIds:      []string{"T5C2A", "T5C2B"},
 	}
@@ -512,7 +502,6 @@ func TestBadChildrenOutput(t *testing.T) {
 		// Start task as paused
 		IsPaused:       false,
 		IsComplete:     false,
-		Priority:       1,
 		ProgressWeight: 1,
 		ParentIds:      []string{},
 	}
@@ -528,7 +517,6 @@ func TestBadChildrenOutput(t *testing.T) {
 		// Start task as paused
 		IsPaused:       false,
 		IsComplete:     false,
-		Priority:       1,
 		ProgressWeight: 1,
 		ParentIds:      []string{},
 	}
@@ -544,7 +532,6 @@ func TestBadChildrenOutput(t *testing.T) {
 		// Start task as paused
 		IsPaused:       false,
 		IsComplete:     false,
-		Priority:       1,
 		ProgressWeight: 1,
 		ParentIds:      []string{"CX"},
 	}
@@ -611,7 +598,6 @@ func TestWorkgroupDelayInSecondsOutput(t *testing.T) {
 		// Start task as paused
 		IsPaused:       false,
 		IsComplete:     false,
-		Priority:       1,
 		ProgressWeight: 1,
 		ParentIds:      []string{},
 	}
@@ -627,7 +613,6 @@ func TestWorkgroupDelayInSecondsOutput(t *testing.T) {
 		// Start task as paused
 		IsPaused:       false,
 		IsComplete:     false,
-		Priority:       1,
 		ProgressWeight: 1,
 		ParentIds:      []string{},
 		RunAfter:       time.Time{},
@@ -721,7 +706,6 @@ func TestChildrenDelayInSecondsSecondsOutput(t *testing.T) {
 		// Start task as paused
 		IsPaused:       false,
 		IsComplete:     false,
-		Priority:       1,
 		ProgressWeight: 1,
 		ParentIds:      []string{},
 	}
@@ -737,7 +721,6 @@ func TestChildrenDelayInSecondsSecondsOutput(t *testing.T) {
 		// Start task as paused
 		IsPaused:       false,
 		IsComplete:     false,
-		Priority:       1,
 		ProgressWeight: 1,
 		ParentIds:      []string{},
 	}

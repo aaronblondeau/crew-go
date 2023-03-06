@@ -45,7 +45,7 @@
 
     <q-tab-panels v-model="tab" animated>
       <q-tab-panel name="tasks">
-        TODO - Tasks
+        <TaskTable :task-group="taskGroup" />
       </q-tab-panel>
       <q-tab-panel name="settings">
         <ModifyTaskGroupCard :taskGroup="taskGroup" :closable="false" @on-save="onSave" />
@@ -64,6 +64,7 @@ import { useTaskGroupStore, TaskGroup } from 'src/stores/task-group-store.js'
 import notifyError from 'src/lib/notifyError'
 import ModifyTaskGroupCard from 'src/components/task-group/ModifyTaskGroupCard.vue'
 import DeleteTaskGroupModalButton from 'src/components/task-group/DeleteTaskGroupModalButton.vue'
+import TaskTable from 'src/components/task/TaskTable.vue'
 
 const router = useRouter()
 

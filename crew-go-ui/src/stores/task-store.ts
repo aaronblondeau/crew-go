@@ -1,0 +1,76 @@
+import { defineStore } from 'pinia'
+import { api } from 'boot/axios'
+
+export interface Task {
+  id: string,
+  taskGroupId: string
+  name: string
+  worker: string
+  workgroup: string
+  key: string
+  remainingAttempts: number
+  isPaused: boolean
+  isComplete: boolean
+  runAfter: string
+  progressWeight: number
+  isSeed: boolean
+  errorDelayInSeconds: number
+  input: any
+  output: any
+  errors: Array<any>
+  createdAt: string
+  parentIds: Array<string>
+  busyExecuting: boolean
+}
+
+export interface ModifyTask {
+  id?: string
+  name: string
+  worker: string
+  workgroup?: string
+  key?: string
+  remainingAttempts?: number
+  isPaused?: boolean
+  isComplete?: boolean
+  runAfter?: string
+  progressWeight?: number
+  isSeed?: boolean
+  errorDelayInSeconds?: number
+  input?: any
+  parentIds?: Array<string>
+}
+
+export interface PaginatedTasks {
+  tasks: Array<Task>,
+  count: number
+}
+
+export const useTaskStore = defineStore('task', {
+  actions: {
+    async getTasks (taskGroupId: string, page = 1, pageSize = 20, search = '') : Promise<PaginatedTasks> {
+      const result = await api.get(`api/v1/task_group/${taskGroupId}/tasks`, {
+        params: {
+          page,
+          pageSize,
+          search
+        }
+      })
+      return result.data
+    },
+    async getTask (taskGroupId: string, taskId: string) : Promise<Task> {
+      const result = await api.get(`api/v1/task_group/${taskGroupId}/task/${taskId}`)
+      return result.data
+    },
+    async updateTask (taskGroupId: string, taskId: string, payload: {name: string}) : Promise<Task> {
+      const result = await api.put(`api/v1/task_group/${taskGroupId}/task/${taskId}`, payload)
+      return result.data
+    },
+    async createTask (taskGroupId: string, payload: ModifyTask) : Promise<Task> {
+      const result = await api.post(`api/v1/task_group/${taskGroupId}/tasks`, payload)
+      return result.data
+    },
+    async deleteTask (taskGroupId: string, taskId: string) {
+      await api.delete(`api/v1/task_group/${taskGroupId}/task/${taskId}`)
+    }
+  }
+})

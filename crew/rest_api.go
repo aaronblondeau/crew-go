@@ -62,6 +62,10 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			return groups[a].CreatedAt.Before(groups[b].CreatedAt)
 		})
 
+		if page_size == 0 {
+			page_size = len(groups)
+		}
+
 		// pagninate groups slice
 		slice_start := (page - 1) * page_size
 		slice_end := slice_start + page_size
@@ -115,16 +119,31 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
 		}
 
+		search := ""
+		if c.QueryParams().Has("search") {
+			search = c.QueryParam("search")
+		}
+
 		// create an all tasks slice
 		tasks := make([]*Task, 0)
 		for _, operator := range group.TaskOperators {
-			tasks = append(tasks, operator.Task)
+			if search != "" {
+				if strings.Contains(strings.ToLower(operator.Task.Name), strings.ToLower(search)) {
+					tasks = append(tasks, operator.Task)
+				}
+			} else {
+				tasks = append(tasks, operator.Task)
+			}
 		}
 
 		// sort all tasks slice
 		sort.Slice(tasks, func(a, b int) bool {
 			return tasks[a].CreatedAt.Before(tasks[b].CreatedAt)
 		})
+
+		if page_size == 0 {
+			page_size = len(tasks)
+		}
 
 		// pagninate tasks slice
 		slice_start := (page - 1) * page_size

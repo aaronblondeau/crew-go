@@ -28,7 +28,6 @@ type Task struct {
 	RemainingAttempts   int           `json:"remainingAttempts"`
 	IsPaused            bool          `json:"isPaused"`
 	IsComplete          bool          `json:"isComplete"`
-	Priority            int           `json:"priority"`
 	RunAfter            time.Time     `json:"runAfter"`
 	ProgressWeight      int           `json:"progressWeight"`
 	IsSeed              bool          `json:"isSeed"`

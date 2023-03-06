@@ -2,7 +2,7 @@
   <div class="full-width">
     <q-table
       :title="props.title"
-      :rows="taskGroups"
+      :rows="tasks"
       :columns="columns"
       v-model:pagination="paginationModel"
       row-key="id"
@@ -33,16 +33,16 @@
               placeholder="Search"
               filled
               dense
-              @keyup.enter="loadTaskGroups"
+              @keyup.enter="loadTasks"
             >
               <template v-slot:after>
-                <q-btn round dense flat icon="search" @click="loadTaskGroups" />
+                <q-btn round dense flat icon="search" @click="loadTasks" />
                 <q-btn round dense flat icon="clear" @click="clearSearch" />
               </template>
             </q-input>
           </div>
           <div v-if="!props.hideCreateButtons" class="col-12 col-sm-4 text-center" :class="{'text-right': !$q.screen.xs, 'q-mt-sm': $q.screen.xs}">
-            <CreateTaskGroupModalButton @on-create="onCreate" />
+            <CreateTaskModalButton :task-group="props.taskGroup" @on-create="onCreate" />
           </div>
         </div>
       </template>
@@ -51,17 +51,26 @@
         <q-tr :props="props" valign="top">
           <q-td key="id" :props="props">
             <q-btn flat icon="content_copy" size="sm" @click="toClipboard('Id', props.row.id)" />
-            <router-link :to="{ name: 'task_group', params: {taskGroupId: props.row.id }}">{{ props.row.id }}</router-link>
+            {{ props.row.id }}
           </q-td>
 
           <q-td key="name" :props="props">
             {{ props.row.name }}
           </q-td>
 
-          <q-td key="actions" :props="props">
-            <q-btn flat :to="{ name: 'task_group', params: { taskGroupId: props.row.id } }" color="purple" size="sm" icon="launch" />
+          <q-td key="worker" :props="props">
+            {{ props.row.worker }}
           </q-td>
 
+          <q-td key="isComplete" :props="props">
+            {{ props.row.isComplete ? 'Yes' : 'No' }}
+          </q-td>
+
+          <q-td key="actions" :props="props">
+            <CreateTaskModalButton label="" size="sm" flat :task-group="rootProps.taskGroup" :parent-id="props.row.id" @on-create="onCreate" />
+            <EditTaskModalButton label="" size="sm" flat :task-group="rootProps.taskGroup" :task="props.row" @on-update="onUpdate" />
+            <DeleteTaskModalButton label="" size="sm" flat :task="props.row" @on-delete="onDelete" />
+          </q-td>
         </q-tr>
       </template>
     </q-table>
@@ -73,35 +82,29 @@ import { onMounted, ref } from 'vue'
 import toClipboard from 'src/lib/toClipboard'
 import { useRouter, useRoute } from 'vue-router'
 import notifyError from 'src/lib/notifyError'
-import CreateTaskGroupModalButton from 'src/components/task-group/CreateTaskGroupModalButton.vue'
+import CreateTaskModalButton from 'src/components/task/CreateTaskModalButton.vue'
+import EditTaskModalButton from 'src/components/task/EditTaskModalButton.vue'
+import DeleteTaskModalButton from 'src/components/task/DeleteTaskModalButton.vue'
 import { QTableProps } from 'quasar'
-import { useTaskGroupStore, TaskGroup } from 'src/stores/task-group-store'
+import { useTaskStore, Task } from 'src/stores/task-store'
+import { TaskGroup } from 'src/stores/task-group-store'
 
-const taskGroupStore = useTaskGroupStore()
+const taskStore = useTaskStore()
 
 const router = useRouter()
 const route = useRoute()
 
-const props = defineProps({
-  title: {
-    type: String,
-    required: false,
-    default: 'Task Groups'
-  },
-  hideCreateButtons: {
-    type: Boolean,
-    required: false,
-    default: false
-  },
-  embedded: {
-    type: Boolean,
-    required: false,
-    default: false
-  }
-})
+interface Props {
+  title?: string;
+  taskGroup: TaskGroup;
+  hideCreateButtons?: boolean;
+  embedded?: boolean;
+}
+const props = withDefaults(defineProps<Props>(), { title: 'Tasks', hideCreateButtons: false, embedded: false })
+const rootProps = props
 
 const loading = ref(true)
-const taskGroups = ref<Array<TaskGroup>>([])
+const tasks = ref<Array<Task>>([])
 const paginationModel = ref<QTableProps['pagination']>({
   page: parseInt(router.currentRoute.value.query.page ? router.currentRoute.value.query.page as string : '1'),
   rowsPerPage: router.currentRoute.value.query.page_size ? parseInt(router.currentRoute.value.query.page_size as string) : 20,
@@ -123,6 +126,18 @@ const columns : QTableProps['columns'] = [
     align: 'left'
   },
   {
+    name: 'worker',
+    field: 'worker',
+    label: 'Worker',
+    align: 'left'
+  },
+  {
+    name: 'isComplete',
+    field: 'isComplete',
+    label: 'Complete',
+    align: 'left'
+  },
+  {
     name: 'actions',
     field: '',
     label: 'Actions',
@@ -130,27 +145,38 @@ const columns : QTableProps['columns'] = [
   }
 ]
 
-function onCreate (group: TaskGroup) {
-  router.push({ name: 'task_group', params: { taskGroupId: group.id } })
+function onCreate (task: Task) {
+  console.log('~~ task created', task)
+  loadTasks()
+}
+
+function onUpdate (task: Task) {
+  console.log('~~ task updated', task)
+  loadTasks()
+}
+
+function onDelete (taskId: string) {
+  console.log('~~ task deleted', taskId)
+  loadTasks()
 }
 
 async function clearSearch () {
   search.value = ''
-  await loadTaskGroups()
+  await loadTasks()
 }
 
 const onRequest : QTableProps['onRequest'] = async ({ pagination }) => {
   paginationModel.value = pagination
-  await loadTaskGroups()
+  await loadTasks()
 }
 
-async function loadTaskGroups () {
+async function loadTasks () {
   try {
     if (paginationModel.value) {
       loading.value = true
-      const result = await taskGroupStore.getTaskGroups(paginationModel.value.page, paginationModel.value.rowsPerPage, search.value)
+      const result = await taskStore.getTasks(props.taskGroup.id, paginationModel.value.page, paginationModel.value.rowsPerPage, search.value)
       paginationModel.value.rowsNumber = result.count
-      taskGroups.value = result.taskGroups
+      tasks.value = result.tasks
       router.push({ query: { ...route.query, q: search.value, page: paginationModel.value.page, page_size: paginationModel.value.rowsPerPage } })
     }
   } catch (e) {
@@ -161,6 +187,6 @@ async function loadTaskGroups () {
 }
 
 onMounted(async () => {
-  await loadTaskGroups()
+  await loadTasks()
 })
 </script>
