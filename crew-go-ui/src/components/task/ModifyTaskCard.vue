@@ -81,6 +81,23 @@
           <q-checkbox v-model="isComplete" label="Complete" />
         </div>
 
+        <q-input filled v-model="runAfter" label="Run After" class="q-mt-md" :readonly="true" @click="showRunAfterPopup">
+          <template v-slot:append>
+            <q-btn icon="close" flat @click="runAfter = ''" />
+            <q-icon name="event" class="cursor-pointer">
+              <q-popup-proxy ref="runAfterProxy" cover transition-show="scale" transition-hide="scale">
+                <div class="row items-center justify-end">
+                  <q-btn v-close-popup label="Close" icon="close" color="primary" flat />
+                </div>
+                <div class="row q-gutter-md items-start">
+                  <q-date v-model="runAfter" :mask="dateFormat" />
+                  <q-time v-model="runAfter" :mask="dateFormat" />
+                </div>
+              </q-popup-proxy>
+            </q-icon>
+          </template>
+        </q-input>
+
         TODO - if creating and props.parentId - autofill parentids (readonly) with {{ props.parentId }}
 
       </q-form>
@@ -104,7 +121,7 @@ import { useTaskStore, Task, ModifyTask } from 'src/stores/task-store'
 import { TaskGroup } from 'src/stores/task-group-store'
 import { onMounted, ref, watch } from 'vue'
 import notifyError from 'src/lib/notifyError'
-import { Notify, QForm } from 'quasar'
+import { Notify, QForm, QPopupProxy } from 'quasar'
 
 export interface Props {
   task?: Task | null
@@ -127,6 +144,9 @@ const key = ref('')
 const remainingAttempts = ref(5)
 const isPaused = ref(false)
 const isComplete = ref(false)
+const runAfter = ref('')
+const runAfterProxy = ref<QPopupProxy | null>(null)
+const dateFormat = 'YYYY-MM-DDTHH:mm:ss[Z]'
 
 function reset () {
   name.value = ''
@@ -136,6 +156,7 @@ function reset () {
   remainingAttempts.value = 5
   isPaused.value = false
   isComplete.value = false
+  runAfter.value = ''
 }
 
 async function create () {
@@ -153,7 +174,8 @@ async function create () {
         key: key.value,
         remainingAttempts: remainingAttempts.value,
         isPaused: isPaused.value,
-        isComplete: isComplete.value
+        isComplete: isComplete.value,
+        runAfter: runAfter.value
       }
       if (props.task) {
         // Updating existing task
@@ -185,6 +207,7 @@ async function create () {
 }
 
 function initFields () {
+  console.log(props.task)
   if (props.task) {
     id.value = props.task.id
     name.value = props.task.name
@@ -194,6 +217,13 @@ function initFields () {
     remainingAttempts.value = props.task.remainingAttempts
     isPaused.value = props.task.isPaused
     isComplete.value = props.task.isComplete
+    runAfter.value = props.task.runAfter.startsWith('000') ? '' : props.task.runAfter
+  }
+}
+
+function showRunAfterPopup () {
+  if (runAfterProxy.value) {
+    runAfterProxy.value.show()
   }
 }
 

@@ -120,14 +120,34 @@ func (operator *TaskOperator) Operate() {
 					operator.Task.Name = newName
 				}
 
+				newWorker, hasNewWorker := update.Update["worker"].(string)
+				if hasNewWorker {
+					operator.Task.Worker = newWorker
+				}
+
+				newWorkgroup, hasNewWorkgroup := update.Update["workgroup"].(string)
+				if hasNewWorkgroup {
+					operator.Task.Workgroup = newWorkgroup
+				}
+
+				newKey, hasNewKey := update.Update["key"].(string)
+				if hasNewKey {
+					operator.Task.Key = newKey
+				}
+
 				newIsPaused, hasIsPaused := update.Update["isPaused"].(bool)
 				if hasIsPaused {
 					operator.Task.IsPaused = newIsPaused
 				}
 
-				newRunAfter, hasRunAfter := update.Update["runAfter"].(time.Time)
+				newRunAfter, hasRunAfter := update.Update["runAfter"]
 				if hasRunAfter {
-					operator.Task.RunAfter = newRunAfter
+					switch t := newRunAfter.(type) {
+					case time.Time:
+						operator.Task.RunAfter = t
+					default:
+						operator.Task.RunAfter = time.Time{}
+					}
 				}
 
 				newIsComplete, hasIsComplete := update.Update["isComplete"].(bool)
@@ -135,9 +155,16 @@ func (operator *TaskOperator) Operate() {
 					operator.Task.IsComplete = newIsComplete
 				}
 
-				newRemainingAttempts, hasRemainingAttempts := update.Update["remainingAttempts"].(int)
+				newRemainingAttempts, hasRemainingAttempts := update.Update["remainingAttempts"]
 				if hasRemainingAttempts {
-					operator.Task.RemainingAttempts = newRemainingAttempts
+					switch t := newRemainingAttempts.(type) {
+					case int:
+						operator.Task.RemainingAttempts = t
+					case float64:
+						operator.Task.RemainingAttempts = int(t)
+					default:
+						fmt.Printf("~~ Unable to update remainingAttempts - unknown type : %T", newRemainingAttempts)
+					}
 				}
 
 				newInput, hasInput := update.Update["input"]

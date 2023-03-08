@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -445,6 +446,20 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 		parseErr := json.NewDecoder(c.Request().Body).Decode(&update)
 		if parseErr != nil {
 			return c.String(http.StatusBadRequest, parseErr.Error())
+		}
+
+		newRunAfter, hasRunAfter := update["runAfter"]
+		if hasRunAfter {
+			if newRunAfter == "" {
+				update["runAfter"] = nil
+			} else {
+				// Turn run after into a time.Time
+				runAfter, runAfterError := time.Parse("2006-01-02T15:04:05Z", newRunAfter.(string))
+				if runAfterError != nil {
+					return c.String(http.StatusBadRequest, runAfterError.Error())
+				}
+				update["runAfter"] = runAfter
+			}
 		}
 
 		// Task updates happen in operator goroutine, use a channel to sync
