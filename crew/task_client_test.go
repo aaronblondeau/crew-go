@@ -102,10 +102,9 @@ func TestTaskInvokesClientPost(t *testing.T) {
 		Key:               "T1",
 		RemainingAttempts: 5,
 		// Start task as paused
-		IsPaused:       false,
-		IsComplete:     false,
-		ProgressWeight: 1,
-		ParentIds:      []string{},
+		IsPaused:   false,
+		IsComplete: false,
+		ParentIds:  []string{},
 	}
 	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
 	group := NewTaskGroup("G1", "Test", taskGroupController)
@@ -155,10 +154,9 @@ func TestCaptureError(t *testing.T) {
 		Key:               "T2",
 		RemainingAttempts: 1,
 		// Start task as paused
-		IsPaused:       false,
-		IsComplete:     false,
-		ProgressWeight: 1,
-		ParentIds:      []string{},
+		IsPaused:   false,
+		IsComplete: false,
+		ParentIds:  []string{},
 	}
 	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
 	group := NewTaskGroup("G2", "Test", taskGroupController)
@@ -211,7 +209,6 @@ func TestErrorOnceThenSucceed(t *testing.T) {
 		// Start task as paused
 		IsPaused:            false,
 		IsComplete:          false,
-		ProgressWeight:      1,
 		ParentIds:           []string{},
 		ErrorDelayInSeconds: 1.0,
 	}
@@ -264,10 +261,9 @@ func TestSingleChildOutput(t *testing.T) {
 		Key:               "T4P",
 		RemainingAttempts: 2,
 		// Start task as paused
-		IsPaused:       false,
-		IsComplete:     false,
-		ProgressWeight: 1,
-		ParentIds:      []string{},
+		IsPaused:   false,
+		IsComplete: false,
+		ParentIds:  []string{},
 	}
 
 	child := Task{
@@ -279,10 +275,9 @@ func TestSingleChildOutput(t *testing.T) {
 		Key:               "T4C",
 		RemainingAttempts: 2,
 		// Start task as paused
-		IsPaused:       false,
-		IsComplete:     false,
-		ProgressWeight: 1,
-		ParentIds:      []string{},
+		IsPaused:   false,
+		IsComplete: false,
+		ParentIds:  []string{},
 	}
 	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
 	group := NewTaskGroup("G4", "Test", taskGroupController)
@@ -346,10 +341,9 @@ func TestMultipleChildOutput(t *testing.T) {
 		Key:               "T5P",
 		RemainingAttempts: 2,
 		// Start task as paused
-		IsPaused:       false,
-		IsComplete:     false,
-		ProgressWeight: 1,
-		ParentIds:      []string{},
+		IsPaused:   false,
+		IsComplete: false,
+		ParentIds:  []string{},
 	}
 
 	child1 := Task{
@@ -361,10 +355,9 @@ func TestMultipleChildOutput(t *testing.T) {
 		Key:               "T5C1",
 		RemainingAttempts: 2,
 		// Start task as paused
-		IsPaused:       false,
-		IsComplete:     false,
-		ProgressWeight: 1,
-		ParentIds:      []string{},
+		IsPaused:   false,
+		IsComplete: false,
+		ParentIds:  []string{},
 	}
 
 	child2A := Task{
@@ -376,10 +369,9 @@ func TestMultipleChildOutput(t *testing.T) {
 		Key:               "T5C2A",
 		RemainingAttempts: 2,
 		// Start task as paused
-		IsPaused:       false,
-		IsComplete:     false,
-		ProgressWeight: 1,
-		ParentIds:      []string{"T5C1"},
+		IsPaused:   false,
+		IsComplete: false,
+		ParentIds:  []string{"T5C1"},
 	}
 
 	child2B := Task{
@@ -391,10 +383,9 @@ func TestMultipleChildOutput(t *testing.T) {
 		Key:               "T5C2B",
 		RemainingAttempts: 2,
 		// Start task as paused
-		IsPaused:       false,
-		IsComplete:     false,
-		ProgressWeight: 1,
-		ParentIds:      []string{"T5C1"},
+		IsPaused:   false,
+		IsComplete: false,
+		ParentIds:  []string{"T5C1"},
 	}
 
 	child3 := Task{
@@ -406,10 +397,9 @@ func TestMultipleChildOutput(t *testing.T) {
 		Key:               "T5C3",
 		RemainingAttempts: 2,
 		// Start task as paused
-		IsPaused:       false,
-		IsComplete:     false,
-		ProgressWeight: 1,
-		ParentIds:      []string{"T5C2A", "T5C2B"},
+		IsPaused:   false,
+		IsComplete: false,
+		ParentIds:  []string{"T5C2A", "T5C2B"},
 	}
 	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
 	group := NewTaskGroup("G5", "Test", taskGroupController)
@@ -500,10 +490,9 @@ func TestBadChildrenOutput(t *testing.T) {
 		Key:               "T6P1",
 		RemainingAttempts: 2,
 		// Start task as paused
-		IsPaused:       false,
-		IsComplete:     false,
-		ProgressWeight: 1,
-		ParentIds:      []string{},
+		IsPaused:   false,
+		IsComplete: false,
+		ParentIds:  []string{},
 	}
 
 	child1 := Task{
@@ -515,10 +504,9 @@ func TestBadChildrenOutput(t *testing.T) {
 		Key:               "T6C1",
 		RemainingAttempts: 2,
 		// Start task as paused
-		IsPaused:       false,
-		IsComplete:     false,
-		ProgressWeight: 1,
-		ParentIds:      []string{},
+		IsPaused:   false,
+		IsComplete: false,
+		ParentIds:  []string{},
 	}
 
 	child2 := Task{
@@ -530,10 +518,9 @@ func TestBadChildrenOutput(t *testing.T) {
 		Key:               "T6C2",
 		RemainingAttempts: 2,
 		// Start task as paused
-		IsPaused:       false,
-		IsComplete:     false,
-		ProgressWeight: 1,
-		ParentIds:      []string{"CX"},
+		IsPaused:   false,
+		IsComplete: false,
+		ParentIds:  []string{"CX"},
 	}
 	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
 	group := NewTaskGroup("G6", "Test", taskGroupController)
@@ -596,10 +583,9 @@ func TestWorkgroupDelayInSecondsOutput(t *testing.T) {
 		Key:               "T14P",
 		RemainingAttempts: 2,
 		// Start task as paused
-		IsPaused:       false,
-		IsComplete:     false,
-		ProgressWeight: 1,
-		ParentIds:      []string{},
+		IsPaused:   false,
+		IsComplete: false,
+		ParentIds:  []string{},
 	}
 
 	child := Task{
@@ -611,11 +597,10 @@ func TestWorkgroupDelayInSecondsOutput(t *testing.T) {
 		Key:               "T14C",
 		RemainingAttempts: 2,
 		// Start task as paused
-		IsPaused:       false,
-		IsComplete:     false,
-		ProgressWeight: 1,
-		ParentIds:      []string{},
-		RunAfter:       time.Time{},
+		IsPaused:   false,
+		IsComplete: false,
+		ParentIds:  []string{},
+		RunAfter:   time.Time{},
 	}
 	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
 	group := NewTaskGroup("G14", "Test", taskGroupController)
@@ -704,10 +689,9 @@ func TestChildrenDelayInSecondsSecondsOutput(t *testing.T) {
 		Key:               "T15P",
 		RemainingAttempts: 2,
 		// Start task as paused
-		IsPaused:       false,
-		IsComplete:     false,
-		ProgressWeight: 1,
-		ParentIds:      []string{},
+		IsPaused:   false,
+		IsComplete: false,
+		ParentIds:  []string{},
 	}
 
 	child := Task{
@@ -719,10 +703,9 @@ func TestChildrenDelayInSecondsSecondsOutput(t *testing.T) {
 		Key:               "T15C",
 		RemainingAttempts: 2,
 		// Start task as paused
-		IsPaused:       false,
-		IsComplete:     false,
-		ProgressWeight: 1,
-		ParentIds:      []string{},
+		IsPaused:   false,
+		IsComplete: false,
+		ParentIds:  []string{},
 	}
 	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
 	group := NewTaskGroup("G15", "Test", taskGroupController)

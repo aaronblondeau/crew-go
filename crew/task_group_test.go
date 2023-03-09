@@ -33,7 +33,6 @@ func TestPrepareInflatesChildren(t *testing.T) {
 		RemainingAttempts: 5,
 		IsPaused:          false,
 		IsComplete:        false,
-		ProgressWeight:    1,
 	}
 
 	task := Task{
@@ -46,7 +45,6 @@ func TestPrepareInflatesChildren(t *testing.T) {
 		RemainingAttempts: 5,
 		IsPaused:          false,
 		IsComplete:        false,
-		ProgressWeight:    1,
 		ParentIds:         []string{"T7A"},
 	}
 	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
@@ -69,7 +67,6 @@ func TestCanDeleteTask(t *testing.T) {
 		RemainingAttempts: 5,
 		IsPaused:          true,
 		IsComplete:        false,
-		ProgressWeight:    1,
 		ParentIds:         []string{},
 	}
 	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
@@ -98,10 +95,9 @@ func TestCanAddTask(t *testing.T) {
 		Key:               "T9",
 		RemainingAttempts: 5,
 		// Start task as paused
-		IsPaused:       true,
-		IsComplete:     false,
-		ProgressWeight: 1,
-		ParentIds:      []string{},
+		IsPaused:   true,
+		IsComplete: false,
+		ParentIds:  []string{},
 	}
 
 	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
@@ -167,7 +163,6 @@ func TestCanResetTaskGroupNoSeeds(t *testing.T) {
 		IsSeed:            false,
 		Output:            map[string]interface{}{"ouput": "stuff"},
 		Errors:            errors,
-		ProgressWeight:    1,
 		RunAfter:          originalRunAfter,
 	}
 
@@ -211,7 +206,6 @@ func TestCanResetTaskGroupWithSeeds(t *testing.T) {
 		IsPaused:          true,
 		IsComplete:        true,
 		IsSeed:            true,
-		ProgressWeight:    1,
 	}
 
 	task2 := Task{
@@ -225,7 +219,6 @@ func TestCanResetTaskGroupWithSeeds(t *testing.T) {
 		IsPaused:          true,
 		IsComplete:        true,
 		IsSeed:            false,
-		ProgressWeight:    1,
 		ParentIds:         []string{"T23A"},
 	}
 
@@ -240,7 +233,6 @@ func TestCanResetTaskGroupWithSeeds(t *testing.T) {
 		IsPaused:          true,
 		IsComplete:        true,
 		IsSeed:            false,
-		ProgressWeight:    1,
 		ParentIds:         []string{"T23B"},
 	}
 
@@ -280,7 +272,6 @@ func TestCanPauseAllTasks(t *testing.T) {
 		IsPaused:          false,
 		IsComplete:        true,
 		IsSeed:            true,
-		ProgressWeight:    1,
 	}
 
 	task2 := Task{
@@ -294,7 +285,6 @@ func TestCanPauseAllTasks(t *testing.T) {
 		IsPaused:          false,
 		IsComplete:        true,
 		IsSeed:            false,
-		ProgressWeight:    1,
 		ParentIds:         []string{"T24A"},
 	}
 

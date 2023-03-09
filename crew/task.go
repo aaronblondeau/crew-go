@@ -29,7 +29,6 @@ type Task struct {
 	IsPaused            bool          `json:"isPaused"`
 	IsComplete          bool          `json:"isComplete"`
 	RunAfter            time.Time     `json:"runAfter"`
-	ProgressWeight      int           `json:"progressWeight"`
 	IsSeed              bool          `json:"isSeed"`
 	ErrorDelayInSeconds int           `json:"errorDelayInSeconds"`
 	Input               interface{}   `json:"input"`
@@ -163,7 +162,19 @@ func (operator *TaskOperator) Operate() {
 					case float64:
 						operator.Task.RemainingAttempts = int(t)
 					default:
-						fmt.Printf("~~ Unable to update remainingAttempts - unknown type : %T", newRemainingAttempts)
+						operator.Task.RemainingAttempts = 0
+					}
+				}
+
+				newErrorDelayInSeconds, hasErrorDelayInSeconds := update.Update["errorDelayInSeconds"]
+				if hasErrorDelayInSeconds {
+					switch t := newErrorDelayInSeconds.(type) {
+					case int:
+						operator.Task.ErrorDelayInSeconds = t
+					case float64:
+						operator.Task.ErrorDelayInSeconds = int(t)
+					default:
+						operator.Task.ErrorDelayInSeconds = 0
 					}
 				}
 
@@ -182,7 +193,10 @@ func (operator *TaskOperator) Operate() {
 					operator.Task.Errors = newErrors
 				}
 
-				// TODO - handle additional fields
+				newIsSeed, hasIsSeed := update.Update["isSeed"].(bool)
+				if hasIsSeed {
+					operator.Task.IsSeed = newIsSeed
+				}
 
 				// persist the change
 				saveError := operator.TaskGroup.Storage.SaveTask(operator.TaskGroup, operator.Task)

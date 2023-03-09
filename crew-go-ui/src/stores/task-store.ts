@@ -12,14 +12,13 @@ export interface Task {
   isPaused: boolean
   isComplete: boolean
   runAfter: string
-  progressWeight: number
   isSeed: boolean
   errorDelayInSeconds: number
   input: any
   output: any
   errors: Array<any>
   createdAt: string
-  parentIds: Array<string>
+  parentIds: any // Array<string>
   busyExecuting: boolean
 }
 
@@ -33,7 +32,6 @@ export interface ModifyTask {
   isPaused?: boolean
   isComplete?: boolean
   runAfter?: string
-  progressWeight?: number
   isSeed?: boolean
   errorDelayInSeconds?: number
   input?: any

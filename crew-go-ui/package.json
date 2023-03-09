@@ -14,9 +14,11 @@
   "dependencies": {
     "@quasar/extras": "^1.0.0",
     "axios": "^1.2.1",
+    "json-editor-vue": "^0.10.5",
     "lodash": "^4.17.21",
     "pinia": "^2.0.11",
     "quasar": "^2.6.0",
+    "vanilla-jsoneditor": "^0.15.1",
     "vue": "^3.0.0",
     "vue-router": "^4.0.0"
   },

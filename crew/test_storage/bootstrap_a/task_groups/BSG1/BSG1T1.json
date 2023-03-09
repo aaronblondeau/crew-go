@@ -10,7 +10,6 @@
     "isComplete": false,
     "priority": 1,
     "runAfter": "2023-02-14T17:30:14.8371921-07:00",
-    "progressWeight": 1,
     "isSeed": false,
     "errorDelayInSeconds": 5,
     "input": "Test",

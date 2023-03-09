@@ -219,6 +219,17 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 		}
 		task.TaskGroupId = group.Id
 
+		// If parent ids are present validate that all parents exist
+		fmt.Println("Got task parents", task.ParentIds)
+		if len(task.ParentIds) > 0 {
+			for _, parentId := range task.ParentIds {
+				_, found = group.TaskOperators[parentId]
+				if !found {
+					return c.String(http.StatusBadRequest, fmt.Sprintf("Parent %s does not exist", parentId))
+				}
+			}
+		}
+
 		err := group.AddTask(&task, taskClient)
 		if err != nil {
 			return c.String(http.StatusBadRequest, err.Error())
@@ -459,6 +470,33 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 					return c.String(http.StatusBadRequest, runAfterError.Error())
 				}
 				update["runAfter"] = runAfter
+			}
+		}
+
+		// If parent ids are present validate that all parents exist
+		newParentIds, hasParentIds := update["parentIds"]
+		if hasParentIds {
+			switch t := newParentIds.(type) {
+			case []interface{}:
+				if len(t) == 0 {
+					update["parentIds"] = make([]string, 0)
+				} else {
+					for _, parentIdCandidate := range t {
+						parentId, ok := parentIdCandidate.(string)
+						if ok {
+							// Make sure parent id exists (and isn't self)
+							_, parentFound := group.TaskOperators[parentId]
+							if !parentFound {
+								return c.String(http.StatusBadRequest, fmt.Sprintf("Parent %s does not exist", parentId))
+							}
+							if parentId == taskId {
+								return c.String(http.StatusBadRequest, "Task cannot be own parent")
+							}
+						}
+					}
+				}
+			default:
+				// Not expected input type for parentIds
 			}
 		}
 

@@ -32,7 +32,6 @@ func TestCanExecute(t *testing.T) {
 		RemainingAttempts: 5,
 		IsPaused:          false,
 		IsComplete:        false,
-		ProgressWeight:    1,
 	}
 	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
 	group := NewTaskGroup("G10", "Test", taskGroupController)
@@ -57,7 +56,6 @@ func TestCannotExecuteIfTaskIsPaused(t *testing.T) {
 		// Tasks cannot be executed if they are paused
 		IsPaused:            true,
 		IsComplete:          false,
-		ProgressWeight:      1,
 		IsSeed:              false,
 		ErrorDelayInSeconds: 5,
 		Input:               "Test",
@@ -86,7 +84,6 @@ func TestCannotExecuteIfParentsIncomplete(t *testing.T) {
 		RemainingAttempts: 5,
 		IsPaused:          false,
 		IsComplete:        false,
-		ProgressWeight:    1,
 	}
 
 	task := Task{
@@ -99,7 +96,6 @@ func TestCannotExecuteIfParentsIncomplete(t *testing.T) {
 		RemainingAttempts: 5,
 		IsPaused:          false,
 		IsComplete:        false,
-		ProgressWeight:    1,
 		ParentIds:         []string{"T12P"},
 	}
 	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
@@ -123,7 +119,6 @@ func TestCanUpdateTask(t *testing.T) {
 		RemainingAttempts: 5,
 		IsPaused:          true,
 		IsComplete:        false,
-		ProgressWeight:    1,
 		ParentIds:         []string{"T1"},
 	}
 
@@ -171,7 +166,6 @@ func TestCanResetTask(t *testing.T) {
 		IsComplete:        true,
 		Output:            map[string]interface{}{"ouput": "stuff"},
 		Errors:            errors,
-		ProgressWeight:    1,
 		RunAfter:          originalRunAfter,
 	}
 

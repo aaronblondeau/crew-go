@@ -151,7 +151,6 @@ function onCreate (task: Task) {
 }
 
 function onUpdate (task: Task) {
-  console.log('~~ task updated', task)
   loadTasks()
 }
 

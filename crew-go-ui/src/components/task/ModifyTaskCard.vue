@@ -35,6 +35,16 @@
           autofocus
         />
 
+        <div class="q-mt-md">
+          <div>
+            <q-checkbox v-model="isSeed" label="Seed" />
+          </div>
+          <div class="text-caption">
+            When a task group contains seed tasks all non-seed tasks are deleted when the task group is reset.
+            Ths Seed option should usually only be checked for tasks that create child tasks.
+          </div>
+        </div>
+
         <q-input
           filled
           v-model="worker"
@@ -73,6 +83,15 @@
           hint="How many attempts should the task be tried."
         />
 
+        <q-input
+          filled
+          v-model.number="errorDelayInSeconds"
+          type="number"
+          label="Error Delay (Seconds)"
+          class="q-mt-md"
+          hint="How long to wait before retrying a task."
+        />
+
         <div class="q-mt-md">
           <q-checkbox v-model="isPaused" label="Paused" />
         </div>
@@ -98,7 +117,49 @@
           </template>
         </q-input>
 
-        TODO - if creating and props.parentId - autofill parentids (readonly) with {{ props.parentId }}
+        <div class="q-mt-md">
+          <div class="text-h6">Input</div>
+          <JsonEditorVue mode="text" v-model="input" ref="jsonEditor" />
+        </div>
+
+        <div class="q-mt-md">
+          <div class="text-h6">Parent Ids</div>
+          <q-list bordered separator v-if="parentIds.length > 0">
+            <q-item clickable v-ripple v-for="parentId in parentIds" :key="parentId">
+              <q-item-section>
+                <span v-if="parentId">{{ parentId }}</span>
+              </q-item-section>
+              <q-item-section side v-if="parentIds.length > 1">
+                <q-btn flat icon="delete" @click="removeParentId(parentId)"></q-btn>
+              </q-item-section>
+            </q-item>
+          </q-list>
+          <q-btn flat label="Add Parent" icon="add" @click="showAddAddParentIdDialog = true" />
+          <q-dialog v-model="showAddAddParentIdDialog">
+            <q-card>
+              <q-card-section class="row items-center q-pb-none">
+                <div class="text-h6">Add Parent</div>
+                <q-space />
+                <q-btn icon="close" flat round dense v-close-popup />
+              </q-card-section>
+
+              <q-card-section>
+                <q-input
+                  filled
+                  v-model="newParentId"
+                  label="Parent Task Id"
+                  :rules="[
+                    (val) => (val && val.length > 0) || 'Parent id must be filled in.',
+                  ]"
+                />
+              </q-card-section>
+              <q-card-actions align="right">
+                <q-btn flat label="Cancel" color="primary" v-close-popup />
+                <q-btn flat label="Add" color="primary" @click="addParentId" />
+              </q-card-actions>
+            </q-card>
+          </q-dialog>
+        </div>
 
       </q-form>
     </q-card-section>
@@ -122,6 +183,8 @@ import { TaskGroup } from 'src/stores/task-group-store'
 import { onMounted, ref, watch } from 'vue'
 import notifyError from 'src/lib/notifyError'
 import { Notify, QForm, QPopupProxy } from 'quasar'
+import JsonEditorVue from 'json-editor-vue'
+import _ from 'lodash'
 
 export interface Props {
   task?: Task | null
@@ -147,6 +210,13 @@ const isComplete = ref(false)
 const runAfter = ref('')
 const runAfterProxy = ref<QPopupProxy | null>(null)
 const dateFormat = 'YYYY-MM-DDTHH:mm:ss[Z]'
+const isSeed = ref(false)
+const errorDelayInSeconds = ref(30)
+const input = ref<any>({})
+const parentIds = ref<Array<string>>([])
+const newParentId = ref('')
+const showAddAddParentIdDialog = ref(false)
+const jsonEditor = ref<typeof JsonEditorVue | null>(null)
 
 function reset () {
   name.value = ''
@@ -157,11 +227,25 @@ function reset () {
   isPaused.value = false
   isComplete.value = false
   runAfter.value = ''
+  isSeed.value = false
+  errorDelayInSeconds.value = 30
+  input.value = {}
+  parentIds.value = []
 }
 
 async function create () {
   if (!modelForm.value) {
     return
+  }
+  if (jsonEditor.value) {
+    const inputValid = jsonEditor.value.jsonEditor.validate()
+    if (inputValid) {
+      Notify.create({
+        type: 'negative',
+        message: 'Check task input field!'
+      })
+      return
+    }
   }
   const valid = await modelForm.value.validate()
   if (valid) {
@@ -175,7 +259,11 @@ async function create () {
         remainingAttempts: remainingAttempts.value,
         isPaused: isPaused.value,
         isComplete: isComplete.value,
-        runAfter: runAfter.value
+        runAfter: runAfter.value,
+        isSeed: isSeed.value,
+        errorDelayInSeconds: errorDelayInSeconds.value,
+        input: _.isString(input.value) ? JSON.parse(input.value) : input.value,
+        parentIds: parentIds.value
       }
       if (props.task) {
         // Updating existing task
@@ -187,6 +275,10 @@ async function create () {
           message: 'Task successfully saved!'
         })
       } else {
+        if (!payload.runAfter) {
+          delete payload.runAfter
+        }
+
         // Creating new Task
         payload.id = id.value
         const newTask = await taskStore.createTask(props.taskGroup.id, payload)
@@ -203,6 +295,11 @@ async function create () {
     } finally {
       busy.value = false
     }
+  } else {
+    Notify.create({
+      type: 'negative',
+      message: 'Check form for errors!'
+    })
   }
 }
 
@@ -218,6 +315,14 @@ function initFields () {
     isPaused.value = props.task.isPaused
     isComplete.value = props.task.isComplete
     runAfter.value = props.task.runAfter.startsWith('000') ? '' : props.task.runAfter
+    isSeed.value = props.task.isSeed
+    errorDelayInSeconds.value = props.task.errorDelayInSeconds
+    input.value = props.task.input
+    parentIds.value = props.task.parentIds || []
+  }
+  // if creating and props.parentId - autofill
+  if (!props.task && props.parentId) {
+    parentIds.value = [props.parentId]
   }
 }
 
@@ -225,6 +330,16 @@ function showRunAfterPopup () {
   if (runAfterProxy.value) {
     runAfterProxy.value.show()
   }
+}
+
+function removeParentId (parentId: string) {
+  parentIds.value = _.without(parentIds.value, parentId)
+}
+
+function addParentId () {
+  parentIds.value.push(newParentId.value)
+  newParentId.value = ''
+  showAddAddParentIdDialog.value = false
 }
 
 onMounted(async () => {
