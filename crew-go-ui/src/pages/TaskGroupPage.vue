@@ -6,7 +6,6 @@
     />
   </div>
   <div v-if="taskGroup">
-
     <q-toolbar class="bg-indigo-6 text-white">
       <q-space />
       <q-breadcrumbs active-color="white" style="font-size: 16px">
@@ -45,7 +44,15 @@
 
     <q-tab-panels v-model="tab" animated>
       <q-tab-panel name="tasks">
-        <TaskTable :task-group="taskGroup" />
+
+        <div class="q-gutter-md">
+          <q-btn label="Reset" color="orange" @click="onInitReset" icon="skip_previous" />
+          <q-btn label="Retry" color="purple" @click="onInitRetry" icon="restart_alt" />
+          <q-btn label="Pause" color="primary" @click="onPause" icon="pause" />
+          <q-btn label="Resume" color="primary" @click="onResume" icon="play_arrow" />
+        </div>
+
+        <TaskTable ref="taskTable" :task-group="taskGroup" class="q-mt-md" />
       </q-tab-panel>
       <q-tab-panel name="settings">
         <ModifyTaskGroupCard :taskGroup="taskGroup" :closable="false" @on-save="onSave" />
@@ -54,6 +61,74 @@
         </div>
       </q-tab-panel>
     </q-tab-panels>
+
+    <q-dialog v-model="showResetDialog">
+      <q-card>
+        <q-card-section class="row items-center q-pb-none">
+          <div class="text-h6">
+            Reset Task Group?
+          </div>
+          <q-space />
+          <q-btn icon="close" flat round dense v-close-popup />
+        </q-card-section>
+
+        <q-card-section>
+          All tasks in the group will be reset to their initial state. If the group contains seed tasks, all non-seed tasks will be deleted.
+        </q-card-section>
+
+        <q-card-section>
+          <q-input
+            v-model="resetRemainingAttempts"
+            label="Task Remaining Attempts"
+            type="number"
+            filled
+            />
+        </q-card-section>
+
+        <q-card-actions>
+          <q-btn
+            @click="onReset"
+            color="orange"
+            class="full-width q-mt-md"
+            :loading="resetWait"
+            :disable="resetWait"
+            label="Reset"
+            />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <q-dialog v-model="showRetryDialog">
+      <q-card>
+        <q-card-section class="row items-center q-pb-none">
+          <div class="text-h6">
+            Retry Task Group?
+          </div>
+          <q-space />
+          <q-btn icon="close" flat round dense v-close-popup />
+        </q-card-section>
+
+        <q-card-section>
+          <q-input
+            v-model="retryRemainingAttempts"
+            label="Task Remaining Attempts"
+            type="number"
+            filled
+            />
+        </q-card-section>
+
+        <q-card-actions>
+          <q-btn
+            @click="onRetry"
+            color="purple"
+            class="full-width q-mt-md"
+            :loading="retryWait"
+            :disable="retryWait"
+            label="Retry"
+            />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
   </div>
 </template>
 
@@ -73,6 +148,15 @@ const taskGroupStore = useTaskGroupStore()
 
 const tab = ref(router.currentRoute.value.query.tab as string || 'tasks')
 const taskGroup = ref<TaskGroup | null>(null)
+const taskTable = ref<typeof TaskTable>()
+const resetWait = ref(false)
+const retryWait = ref(false)
+const pauseWait = ref(false)
+const resumeWait = ref(false)
+const showResetDialog = ref(false)
+const resetRemainingAttempts = ref(5)
+const showRetryDialog = ref(false)
+const retryRemainingAttempts = ref(5)
 
 async function getTaskGroup () {
   try {
@@ -90,6 +174,64 @@ function onSave (updatedTaskGroup: TaskGroup) {
 
 function onDelete () {
   router.replace({ name: 'home' })
+}
+
+async function onInitReset () {
+  showResetDialog.value = true
+}
+
+async function onReset () {
+  try {
+    resetWait.value = true
+    await taskGroupStore.resetTaskGroup(taskGroupId.value, resetRemainingAttempts.value)
+    await taskTable.value?.loadTasks()
+    showResetDialog.value = false
+  } catch (e) {
+    notifyError(e)
+  } finally {
+    resetWait.value = false
+  }
+}
+
+async function onInitRetry () {
+  showRetryDialog.value = true
+}
+
+async function onRetry () {
+  try {
+    retryWait.value = true
+    await taskGroupStore.retryTaskGroup(taskGroupId.value, retryRemainingAttempts.value)
+    await taskTable.value?.loadTasks()
+    showRetryDialog.value = false
+  } catch (e) {
+    notifyError(e)
+  } finally {
+    retryWait.value = false
+  }
+}
+
+async function onPause () {
+  try {
+    pauseWait.value = true
+    await taskGroupStore.pauseTaskGroup(taskGroupId.value)
+    await taskTable.value?.loadTasks()
+  } catch (e) {
+    notifyError(e)
+  } finally {
+    pauseWait.value = false
+  }
+}
+
+async function onResume () {
+  try {
+    resumeWait.value = true
+    await taskGroupStore.resumeTaskGroup(taskGroupId.value)
+    await taskTable.value?.loadTasks()
+  } catch (e) {
+    notifyError(e)
+  } finally {
+    resumeWait.value = false
+  }
 }
 
 watch(

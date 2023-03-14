@@ -38,6 +38,7 @@
               <template v-slot:after>
                 <q-btn round dense flat icon="search" @click="loadTasks" />
                 <q-btn round dense flat icon="clear" @click="clearSearch" />
+                <q-btn round dense flat icon="refresh" @click="loadTasks" />
               </template>
             </q-input>
           </div>
@@ -51,7 +52,7 @@
         <q-tr :props="props" valign="top">
           <q-td key="id" :props="props">
             <q-btn flat icon="content_copy" size="sm" @click="toClipboard('Id', props.row.id)" />
-            {{ props.row.id }}
+            <!-- {{ props.row.id }} -->
           </q-td>
 
           <q-td key="name" :props="props">
@@ -62,14 +63,53 @@
             {{ props.row.worker }}
           </q-td>
 
+          <q-td key="isPaused" :props="props">
+            {{ props.row.isPaused ? 'Yes' : 'No' }}
+          </q-td>
+
           <q-td key="isComplete" :props="props">
-            {{ props.row.isComplete ? 'Yes' : 'No' }}
+            <span v-if="props.row.busyExecuting">
+              <q-chip size="md" color="purple" text-color="white" icon="pending">
+                Executing
+              </q-chip>
+            </span>
+            <span v-else>
+              <q-chip v-if="props.row.isComplete" size="md" color="green" text-color="white" icon="done">
+                Yes
+              </q-chip>
+              <q-chip v-if="!props.row.isComplete && props.row.errors.length === 0" size="md" color="blue" text-color="white" icon="hourglass_empty">
+                No
+              </q-chip>
+              <q-chip v-if="!props.row.isComplete && props.row.errors.length > 0" size="md" color="orange" text-color="white" icon="warning">
+                No
+              </q-chip>
+            </span>
           </q-td>
 
           <q-td key="actions" :props="props">
-            <CreateTaskModalButton label="" size="sm" flat :task-group="rootProps.taskGroup" :parent-id="props.row.id" @on-create="onCreate" />
+            <CreateTaskModalButton label="" size="sm" flat :task-group="rootProps.taskGroup" :parent-id="props.row.id" @on-create="onCreate">
+              <q-tooltip>
+                Add a child to this task
+              </q-tooltip>
+            </CreateTaskModalButton>
             <EditTaskModalButton label="" size="sm" flat :task-group="rootProps.taskGroup" :task="props.row" @on-update="onUpdate" />
             <DeleteTaskModalButton label="" size="sm" flat :task="props.row" @on-delete="onDelete" />
+
+            <ResetTaskModalButton :task="props.row" @on-reset="(evt: any) => onReset(evt, props.row)" />
+            <RetryTaskModalButton :task="props.row" @on-retry="(evt: any) => onRetry(evt, props.row)" />
+
+            <q-btn v-if="!props.row.isComplete && !props.row.isPaused" flat icon="pause" color="primary" size="sm" @click="pauseTask(props.row)">
+              <q-tooltip>
+                Pause this task
+              </q-tooltip>
+            </q-btn>
+            <q-btn v-if="!props.row.isComplete && props.row.isPaused" flat icon="play_arrow" color="primary" size="sm" @click="resumeTask(props.row)">
+              <q-tooltip>
+                Resume this task
+              </q-tooltip>
+            </q-btn>
+
+            <TaskOutputModalButton :task="props.row" />
           </q-td>
         </q-tr>
       </template>
@@ -85,6 +125,9 @@ import notifyError from 'src/lib/notifyError'
 import CreateTaskModalButton from 'src/components/task/CreateTaskModalButton.vue'
 import EditTaskModalButton from 'src/components/task/EditTaskModalButton.vue'
 import DeleteTaskModalButton from 'src/components/task/DeleteTaskModalButton.vue'
+import ResetTaskModalButton from 'src/components/task/ResetTaskModalButton.vue'
+import RetryTaskModalButton from 'src/components/task/RetryTaskModalButton.vue'
+import TaskOutputModalButton from 'src/components/task/TaskOutputModalButton.vue'
 import { QTableProps } from 'quasar'
 import { useTaskStore, Task } from 'src/stores/task-store'
 import { TaskGroup } from 'src/stores/task-group-store'
@@ -132,6 +175,12 @@ const columns : QTableProps['columns'] = [
     align: 'left'
   },
   {
+    name: 'isPaused',
+    field: 'isPaused',
+    label: 'Paused',
+    align: 'left'
+  },
+  {
     name: 'isComplete',
     field: 'isComplete',
     label: 'Complete',
@@ -175,6 +224,12 @@ async function loadTasks () {
       loading.value = true
       const result = await taskStore.getTasks(props.taskGroup.id, paginationModel.value.page, paginationModel.value.rowsPerPage, search.value)
       paginationModel.value.rowsNumber = result.count
+      for (const task of result.tasks) {
+        task.pauseWait = false
+        task.resumeWait = false
+        task.resetWait = false
+        task.retryWait = false
+      }
       tasks.value = result.tasks
       router.push({ query: { ...route.query, q: search.value, page: paginationModel.value.page, page_size: paginationModel.value.rowsPerPage } })
     }
@@ -184,6 +239,42 @@ async function loadTasks () {
     loading.value = false
   }
 }
+
+async function pauseTask (task: Task) {
+  try {
+    task.pauseWait = true
+    await taskStore.pauseTask(props.taskGroup.id, task.id)
+    task.isPaused = true
+  } catch (e) {
+    notifyError(e)
+  } finally {
+    task.pauseWait = false
+  }
+}
+
+async function resumeTask (task: Task) {
+  try {
+    task.pauseWait = true
+    await taskStore.resumeTask(props.taskGroup.id, task.id)
+    task.isPaused = false
+  } catch (e) {
+    notifyError(e)
+  } finally {
+    task.pauseWait = false
+  }
+}
+
+function onReset (evt: any, task: Task) {
+  Object.assign(task, evt)
+}
+
+function onRetry (evt: any, task: Task) {
+  Object.assign(task, evt)
+}
+
+defineExpose({
+  loadTasks
+})
 
 onMounted(async () => {
   await loadTasks()

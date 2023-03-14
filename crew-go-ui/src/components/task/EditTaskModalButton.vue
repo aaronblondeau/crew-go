@@ -1,5 +1,9 @@
 <template>
-  <q-btn @click="showEditDialog = true" :size="props.size" :flat="props.flat" color="primary" icon="edit" :label="props.label"></q-btn>
+  <q-btn @click="showEditDialog = true" :size="props.size" :flat="props.flat" color="primary" icon="edit" :label="props.label">
+    <q-tooltip>
+      Edit this task
+    </q-tooltip>
+  </q-btn>
 
   <q-dialog v-model="showEditDialog">
     <ModifyTaskCard :task-group="props.taskGroup" :task="task" style="width: 700px; max-width: 80vw;" @on-update="onUpdate" />

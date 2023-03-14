@@ -47,6 +47,22 @@ export const useTaskGroupStore = defineStore('taskGroup', {
     },
     async deleteTaskGroup (id: string) {
       await api.delete(`api/v1/task_group/${id}`)
+    },
+    async resetTaskGroup (id: string, remainingAttempts = 5) : Promise<TaskGroup> {
+      const result = await api.post(`api/v1/task_group/${id}/reset`, { remainingAttempts })
+      return result.data
+    },
+    async retryTaskGroup (id: string, remainingAttempts = 5) : Promise<TaskGroup> {
+      const result = await api.post(`api/v1/task_group/${id}/retry`, { remainingAttempts })
+      return result.data
+    },
+    async pauseTaskGroup (id: string) : Promise<TaskGroup> {
+      const result = await api.post(`api/v1/task_group/${id}/pause`)
+      return result.data
+    },
+    async resumeTaskGroup (id: string) : Promise<TaskGroup> {
+      const result = await api.post(`api/v1/task_group/${id}/resume`)
+      return result.data
     }
   }
 })

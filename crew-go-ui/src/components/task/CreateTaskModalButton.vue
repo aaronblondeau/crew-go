@@ -1,5 +1,7 @@
 <template>
-  <q-btn @click="showCreateDialog = true" :size="props.size" :flat="props.flat" color="primary" icon="add" :label="props.label"></q-btn>
+  <q-btn @click="showCreateDialog = true" :size="props.size" :flat="props.flat" color="primary" icon="add" :label="props.label">
+    <slot />
+  </q-btn>
 
   <q-dialog v-model="showCreateDialog">
     <ModifyTaskCard :task-group="props.taskGroup" :parent-id="props.parentId" style="width: 700px; max-width: 80vw;" @on-create="onCreate" />

@@ -1,5 +1,9 @@
 <template>
-  <q-btn @click="showDeleteDialog = true" :size="props.size" :flat="props.flat" color="red" icon="delete" :label="props.label"></q-btn>
+  <q-btn @click="showDeleteDialog = true" :size="props.size" :flat="props.flat" color="red" icon="delete" :label="props.label">
+    <q-tooltip>
+      Delete this task
+    </q-tooltip>
+  </q-btn>
 
   <q-dialog v-model="showDeleteDialog">
     <DeleteTaskCard :task="props.task" style="width: 700px; max-width: 80vw;" @on-delete="onDelete" @on-cancel="onCancel" />

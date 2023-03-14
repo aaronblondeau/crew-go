@@ -20,6 +20,10 @@ export interface Task {
   createdAt: string
   parentIds: any // Array<string>
   busyExecuting: boolean
+  pauseWait: boolean
+  resumeWait: boolean
+  retryWait: boolean
+  resetWait: boolean
 }
 
 export interface ModifyTask {
@@ -69,6 +73,22 @@ export const useTaskStore = defineStore('task', {
     },
     async deleteTask (taskGroupId: string, taskId: string) {
       await api.delete(`api/v1/task_group/${taskGroupId}/task/${taskId}`)
+    },
+    async pauseTask (taskGroupId: string, taskId: string) {
+      const result = await api.put(`api/v1/task_group/${taskGroupId}/task/${taskId}`, { isPaused: true })
+      return result.data
+    },
+    async resumeTask (taskGroupId: string, taskId: string) {
+      const result = await api.put(`api/v1/task_group/${taskGroupId}/task/${taskId}`, { isPaused: false })
+      return result.data
+    },
+    async resetTask (taskGroupId: string, taskId: string, remainingAttempts = 5) {
+      const result = await api.post(`api/v1/task_group/${taskGroupId}/task/${taskId}/reset`, { remainingAttempts })
+      return result.data
+    },
+    async retryTask (taskGroupId: string, taskId: string, remainingAttempts = 5) {
+      const result = await api.post(`api/v1/task_group/${taskGroupId}/task/${taskId}/retry`, { remainingAttempts })
+      return result.data
     }
   }
 })
