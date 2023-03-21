@@ -147,7 +147,7 @@ func TestCanAddTask(t *testing.T) {
 }
 
 func TestCanResetTaskGroupNoSeeds(t *testing.T) {
-	var errors []interface{}
+	var errors []string
 	errors = append(errors, "Internal server error")
 	originalRunAfter := time.Now().Add(-1 * time.Second)
 	task := Task{

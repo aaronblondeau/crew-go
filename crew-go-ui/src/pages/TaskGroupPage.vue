@@ -25,7 +25,7 @@
         class="text-white gt-xs"
       >
         <q-tab name="tasks" icon="checklist" label="Tasks" />
-        <q-tab name="settings" icon="checklist" label="Settings" />
+        <q-tab name="settings" icon="settings" label="Settings" />
       </q-tabs>
 
       <!-- Narrow Screen Tabs -->
@@ -134,14 +134,17 @@
 
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
-import { ref, watch, onMounted } from 'vue'
+import _ from 'lodash'
+import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useTaskGroupStore, TaskGroup } from 'src/stores/task-group-store.js'
 import notifyError from 'src/lib/notifyError'
 import ModifyTaskGroupCard from 'src/components/task-group/ModifyTaskGroupCard.vue'
 import DeleteTaskGroupModalButton from 'src/components/task-group/DeleteTaskGroupModalButton.vue'
 import TaskTable from 'src/components/task/TaskTable.vue'
+import { useQuasar } from 'quasar'
 
 const router = useRouter()
+const $q = useQuasar()
 
 const taskGroupId = ref(router.currentRoute.value.params.taskGroupId as string)
 const taskGroupStore = useTaskGroupStore()
@@ -234,6 +237,41 @@ async function onResume () {
   }
 }
 
+let cancelWatchGroup : null | (() => void) = null
+
+function unwatchGroup () {
+  if (cancelWatchGroup) {
+    cancelWatchGroup()
+  }
+}
+
+async function watchGroup () {
+  unwatchGroup()
+  console.log('~~ start watch', taskGroupId.value)
+  cancelWatchGroup = await taskGroupStore.watchTaskGroup(taskGroupId.value, (event: any) => {
+    // console.log('~~ task group event', event)
+
+    const payload = JSON.parse(event)
+    if (payload.type === 'update' && _.has(payload, 'task_group')) {
+      taskGroup.value = payload.task_group
+    } else if (payload.type === 'delete' && _.has(payload, 'task_group')) {
+      // This task group has been deleted!
+      $q.dialog({
+        title: 'Task Group Deleted',
+        message: 'This task group has been deleted!'
+      }).onOk(() => {
+        router.push({ name: 'home' })
+      })
+    } else if (payload.type === 'update' && _.has(payload, 'task')) {
+      taskTable.value?.taskUpdated(payload.task)
+    } else if (payload.type === 'delete' && _.has(payload, 'task')) {
+      taskTable.value?.taskDeleted(payload.task)
+    } else if (payload.type === 'create' && _.has(payload, 'task')) {
+      taskTable.value?.taskCreated(payload.task)
+    }
+  })
+}
+
 watch(
   () => router.currentRoute.value,
   (newRoute) => {
@@ -257,5 +295,10 @@ watch(
 
 onMounted(() => {
   getTaskGroup()
+  watchGroup()
+})
+
+onBeforeUnmount(() => {
+  unwatchGroup()
 })
 </script>

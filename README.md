@@ -7,10 +7,8 @@ Note, use this to exclude from JSON `json:"-"` : https://pkg.go.dev/encoding/jso
 cd crew
 go test
 
-TODO : UI - view task errors/output
-
+TODO : task group progress (outside of pagination?)
 TODO : update godoc
-TODO : Implement API / Server Sent Events
 TODO : API (configuranly optional) authentication
 TODO : redis persistence : https://redis.com/blog/go-redis-official-redis-client/
 TODO : Figure out good value for TaskUpdates channel queue size

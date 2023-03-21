@@ -1,5 +1,5 @@
 <template>
-  <q-btn @click="showOutputDialog = true" size="md" flat :color="props.task.errors.length > 0 ? 'orange' : 'primary'" :icon="props.task.errors.length > 0 ? 'report_problem' : 'info'">
+  <q-btn @click="showOutputDialog = true" size="md" flat :color="props.task.errors && props.task.errors.length > 0 ? 'orange' : 'primary'" :icon="props.task.errors && props.task.errors.length > 0 ? 'report_problem' : 'info'">
     <q-tooltip>
       Task Output / Errors
     </q-tooltip>
@@ -16,16 +16,16 @@
       </q-card-section>
 
       <q-card-section>
-        {{ props.task.output }}}
+        {{ props.task.output }}
       </q-card-section>
 
-      <q-card-section v-if="props.task.errors.length > 0">
+      <q-card-section v-if="props.task.errors">
         <div class="text-h6">
           Task Errors
         </div>
       </q-card-section>
 
-      <q-card-section v-if="props.task.errors.length > 0">
+      <q-card-section v-if="props.task.errors">
         {{ props.task.errors }}
       </q-card-section>
     </q-card>

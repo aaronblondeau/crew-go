@@ -63,6 +63,26 @@ export const useTaskGroupStore = defineStore('taskGroup', {
     async resumeTaskGroup (id: string) : Promise<TaskGroup> {
       const result = await api.post(`api/v1/task_group/${id}/resume`)
       return result.data
+    },
+    async watchTaskGroup (id: string, onEvent: (evt: any) => void) : Promise<() => void> {
+      const socket = new WebSocket(`ws://localhost:8090/api/v1/task_group/${id}/stream`)
+
+      socket.onopen = function () {
+        console.log('~~ connected to task group stream')
+      }
+
+      socket.onmessage = function (event) {
+        onEvent(event.data)
+      }
+
+      socket.onclose = function () {
+        console.log('~~ closed task group stream')
+      }
+
+      return () => {
+        console.log('~~ closing task group stream')
+        socket.close()
+      }
     }
   }
 })

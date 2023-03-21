@@ -3,6 +3,7 @@ package crew
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"sort"
@@ -14,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"golang.org/x/net/websocket"
 )
 
 func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, taskClient TaskClient) *http.Server {
@@ -217,6 +219,7 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 		if task.RemainingAttempts == 0 {
 			task.RemainingAttempts = 5
 		}
+		task.CreatedAt = time.Now()
 		task.TaskGroupId = group.Id
 
 		// If parent ids are present validate that all parents exist
@@ -465,7 +468,7 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 				update["runAfter"] = nil
 			} else {
 				// Turn run after into a time.Time
-				runAfter, runAfterError := time.Parse("2006-01-02T15:04:05Z", newRunAfter.(string))
+				runAfter, runAfterError := time.Parse("2006-01-02T15:04:05.9999999-07:00", newRunAfter.(string))
 				if runAfterError != nil {
 					return c.String(http.StatusBadRequest, runAfterError.Error())
 				}
@@ -515,6 +518,94 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 		return c.JSON(http.StatusOK, operator.Task)
 	})
 
+	inShutdown := false
+
+	// Watch for updates in the task group contoller and deliver them to listening websockets
+	watchers := make(map[string]TaskGroupWatcher, 0)
+	go func() {
+		for {
+			select {
+			case taskGroupUpdate := <-taskGroupController.TaskGroupUpdates:
+				for _, watcher := range watchers {
+					if watcher.TaskGroupId == taskGroupUpdate.TaskGroup.Id {
+						evtJson, jsonErr := json.Marshal(taskGroupUpdate)
+						if jsonErr == nil && !inShutdown {
+							watcher.Channel <- string(evtJson)
+						}
+					}
+				}
+
+			case taskUpdate := <-taskGroupController.TaskUpdates:
+				for _, watcher := range watchers {
+					if watcher.TaskGroupId == taskUpdate.Task.TaskGroupId {
+						evtJson, jsonErr := json.Marshal(taskUpdate)
+						if jsonErr == nil && !inShutdown {
+							watcher.Channel <- string(evtJson)
+						}
+					}
+				}
+			}
+		}
+	}()
+
+	e.GET("/api/v1/task_group/:task_group_id/stream", func(c echo.Context) error {
+		taskGroupId := c.Param("task_group_id")
+		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
+		if !groupFound {
+			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
+		}
+		requestId := uuid.New().String()
+
+		websocket.Handler(func(ws *websocket.Conn) {
+			defer ws.Close()
+
+			// Create a "watcher" to keep track of this websocket's request to watch a specific task group
+			sink := make(chan string)
+			watch := TaskGroupWatcher{
+				TaskGroupId: group.Id,
+				Channel:     sink,
+				RequestId:   requestId,
+				Socket:      ws,
+			}
+			watchers[requestId] = watch
+
+			fmt.Println("~~ Websocket opened", requestId)
+
+			// Listen for messages (or close events) from the client
+			go func() {
+				for {
+					msg := ""
+					err := websocket.Message.Receive(ws, &msg)
+					if err != nil {
+						if err == io.EOF {
+							delete(watchers, requestId)
+							close(watch.Channel)
+							return
+						} else {
+							c.Logger().Error(err)
+						}
+						return
+					}
+					// We don't do anything with messages from the client yet
+					fmt.Println("~~ Websocket received", requestId, msg)
+				}
+			}()
+
+			for msg := range sink {
+				// fmt.Println("~~ Sending", msg)
+				// When we get a message on this socket's output channel, write to the websocket
+				err := websocket.Message.Send(ws, msg)
+				if err != nil {
+					// TODO - close channel, remove from watchers?
+					c.Logger().Error(err)
+				}
+			}
+		}).ServeHTTP(c.Response(), c.Request())
+		fmt.Println("~~ Websocket closed", requestId)
+		delete(watchers, requestId)
+		return nil
+	})
+
 	srv := &http.Server{
 		Addr:    "localhost:8090",
 		Handler: e,
@@ -525,10 +616,21 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
 			log.Fatalf("ServeRestApi(): %v", err)
 		}
+		inShutdown = true
+		// Shutdown all watchers
+		for requestId, watcher := range watchers {
+			fmt.Println("~~ Closing watcher", requestId)
+			close(watcher.Channel)
+		}
 		log.Println("ServeRestApi Stopped")
 	}()
 
-	// TODO emit SSE (or websocket) events from taskGroupController.TaskUpdates
-
 	return srv
+}
+
+type TaskGroupWatcher struct {
+	TaskGroupId string
+	Channel     chan string
+	RequestId   string
+	Socket      *websocket.Conn
 }

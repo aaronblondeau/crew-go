@@ -59,7 +59,7 @@ func TestCannotExecuteIfTaskIsPaused(t *testing.T) {
 		IsSeed:              false,
 		ErrorDelayInSeconds: 5,
 		Input:               "Test",
-		Errors:              make([]interface{}, 0),
+		Errors:              make([]string, 0),
 		CreatedAt:           time.Now(),
 		ParentIds:           make([]string, 0),
 		Children:            make([]*Task, 0),
@@ -151,7 +151,7 @@ func TestCanUpdateTask(t *testing.T) {
 }
 
 func TestCanResetTask(t *testing.T) {
-	var errors []interface{}
+	var errors []string
 	errors = append(errors, "Internal server error")
 	originalRunAfter := time.Now().Add(-1 * time.Second)
 	task := Task{

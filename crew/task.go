@@ -19,26 +19,26 @@ type TaskClient interface {
 
 // A Task represents a unit of work that can be completed by a worker.
 type Task struct {
-	Id                  string        `json:"id"`
-	TaskGroupId         string        `json:"taskGroupId"`
-	Name                string        `json:"name"`
-	Worker              string        `json:"worker"`
-	Workgroup           string        `json:"workgroup"`
-	Key                 string        `json:"key"`
-	RemainingAttempts   int           `json:"remainingAttempts"`
-	IsPaused            bool          `json:"isPaused"`
-	IsComplete          bool          `json:"isComplete"`
-	RunAfter            time.Time     `json:"runAfter"`
-	IsSeed              bool          `json:"isSeed"`
-	ErrorDelayInSeconds int           `json:"errorDelayInSeconds"`
-	Input               interface{}   `json:"input"`
-	Output              interface{}   `json:"output"`
-	Errors              []interface{} `json:"errors"`
-	CreatedAt           time.Time     `json:"createdAt"`
-	ParentIds           []string      `json:"parentIds"`
-	BusyExecuting       bool          `json:"busyExecuting"`
-	Children            []*Task       `json:"-"`
-	IsDeleting          bool          `json:"-"`
+	Id                  string      `json:"id"`
+	TaskGroupId         string      `json:"taskGroupId"`
+	Name                string      `json:"name"`
+	Worker              string      `json:"worker"`
+	Workgroup           string      `json:"workgroup"`
+	Key                 string      `json:"key"`
+	RemainingAttempts   int         `json:"remainingAttempts"`
+	IsPaused            bool        `json:"isPaused"`
+	IsComplete          bool        `json:"isComplete"`
+	RunAfter            time.Time   `json:"runAfter"`
+	IsSeed              bool        `json:"isSeed"`
+	ErrorDelayInSeconds int         `json:"errorDelayInSeconds"`
+	Input               interface{} `json:"input"`
+	Output              interface{} `json:"output"`
+	Errors              []string    `json:"errors"`
+	CreatedAt           time.Time   `json:"createdAt"`
+	ParentIds           []string    `json:"parentIds"`
+	BusyExecuting       bool        `json:"busyExecuting"`
+	Children            []*Task     `json:"-"`
+	IsDeleting          bool        `json:"-"`
 	// parentsComplete
 	// assignedTo
 	// assignedAt
@@ -55,7 +55,7 @@ type TaskOperator struct {
 	TaskGroup            *TaskGroup
 	ExternalUpdates      chan TaskUpdate
 	ExecuteTimer         *time.Timer
-	EvaulateTimer        *time.Timer
+	EvaluateTimer        *time.Timer
 	Shutdown             chan bool
 	ParentCompleteEvents chan *Task
 	Operating            bool
@@ -76,7 +76,7 @@ func NewTaskOperator(task *Task, taskGroup *TaskGroup) *TaskOperator {
 		TaskGroup:            taskGroup,
 		ExternalUpdates:      make(chan TaskUpdate, 8),
 		ExecuteTimer:         execTimer,
-		EvaulateTimer:        evalTimer,
+		EvaluateTimer:        evalTimer,
 		Shutdown:             make(chan bool),
 		ParentCompleteEvents: make(chan *Task, len(task.Children)),
 		Executing:            make(chan bool),
@@ -110,8 +110,8 @@ func (operator *TaskOperator) Operate() {
 			case <-operator.ExecuteTimer.C:
 				operator.Execute()
 
-			case <-operator.EvaulateTimer.C:
-				operator.Execute()
+			case <-operator.EvaluateTimer.C:
+				operator.Evaluate()
 
 			case update := <-operator.ExternalUpdates:
 				newName, hasNewName := update.Update["name"].(string)
@@ -188,7 +188,7 @@ func (operator *TaskOperator) Operate() {
 					operator.Task.Output = newOutput
 				}
 
-				newErrors, hasErrors := update.Update["errors"].([]interface{})
+				newErrors, hasErrors := update.Update["errors"].([]string)
 				if hasErrors {
 					operator.Task.Errors = newErrors
 				}
@@ -270,11 +270,9 @@ func (operator *TaskOperator) Evaluate() {
 		if now.Before(operator.Task.RunAfter) {
 			// Task's run after has not passed
 			operator.ExecuteTimer.Reset(operator.Task.RunAfter.Sub(now))
-			// operator.ExecuteTimer = time.NewTimer(operator.Task.RunAfter.Sub(now))
 		} else {
 			// Task's run after has already passed or was not set
 			operator.ExecuteTimer.Reset(time.Millisecond)
-			// operator.ExecuteTimer = time.NewTimer(time.Second)
 		}
 	}
 
@@ -300,9 +298,9 @@ func (operator *TaskOperator) CancelExecute() {
 // CancelEvaluate cancels a task's evaluation.
 func (operator *TaskOperator) CancelEvaluate() {
 	// Stop and drain timer
-	if !operator.EvaulateTimer.Stop() {
+	if !operator.EvaluateTimer.Stop() {
 		select {
-		case <-operator.EvaulateTimer.C:
+		case <-operator.EvaluateTimer.C:
 		default:
 		}
 	}
@@ -316,7 +314,7 @@ func (operator *TaskOperator) ResetTask(remainingAttempts int, updateComplete ch
 			"remainingAttempts": remainingAttempts,
 			"isComplete":        false,
 			"output":            nil,
-			"errors":            make([]interface{}, 0),
+			"errors":            make([]string, 0),
 			"runAfter":          time.Now(),
 		},
 		UpdateComplete: updateComplete,
@@ -354,20 +352,26 @@ func (operator *TaskOperator) Execute() {
 		// Error can come from two places : 1) Processing response from worker, a normal go error 2) An error in the response from the worker
 		// These first two conditions look for each possibility
 		if err != nil {
+			fmt.Println("~~ Got standard error", err)
 			// Capture Error
-			operator.Task.Errors = append(operator.Task.Errors, err)
+			operator.Task.Errors = append(operator.Task.Errors, fmt.Sprintf("%v", err))
 
 			// Setup another evaluation after error delay
+			errorDelay := time.Duration(operator.Task.ErrorDelayInSeconds * int(time.Second))
+			operator.Task.RunAfter = time.Now().Add(errorDelay)
 			if operator.Task.RemainingAttempts > 0 {
-				operator.EvaulateTimer.Reset(time.Duration(operator.Task.ErrorDelayInSeconds * int(time.Second)))
+				operator.EvaluateTimer.Reset(errorDelay)
 			}
 		} else if workerResponse.Error != nil {
+			fmt.Println("~~ Got worker response error", workerResponse.Error)
 			// Capture Error
-			operator.Task.Errors = append(operator.Task.Errors, workerResponse.Error)
+			operator.Task.Errors = append(operator.Task.Errors, fmt.Sprintf("%v", workerResponse.Error))
 
 			// Setup another evaluation after error delay
+			errorDelay := time.Duration(operator.Task.ErrorDelayInSeconds * int(time.Second))
+			operator.Task.RunAfter = time.Now().Add(errorDelay)
 			if operator.Task.RemainingAttempts > 0 {
-				operator.EvaulateTimer.Reset(time.Duration(operator.Task.ErrorDelayInSeconds * int(time.Second)))
+				operator.EvaluateTimer.Reset(errorDelay)
 			}
 		} else {
 			childrenOk := true

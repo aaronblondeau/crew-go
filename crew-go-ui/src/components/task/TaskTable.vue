@@ -77,10 +77,10 @@
               <q-chip v-if="props.row.isComplete" size="md" color="green" text-color="white" icon="done">
                 Yes
               </q-chip>
-              <q-chip v-if="!props.row.isComplete && props.row.errors.length === 0" size="md" color="blue" text-color="white" icon="hourglass_empty">
+              <q-chip v-if="!props.row.isComplete && (!props.row.errors ||  props.row.errors.length === 0)" size="md" color="blue" text-color="white" icon="hourglass_empty">
                 No
               </q-chip>
-              <q-chip v-if="!props.row.isComplete && props.row.errors.length > 0" size="md" color="orange" text-color="white" icon="warning">
+              <q-chip v-if="!props.row.isComplete && props.row.errors && props.row.errors.length > 0" size="md" color="orange" text-color="white" icon="warning">
                 No
               </q-chip>
             </span>
@@ -121,6 +121,7 @@
 import { onMounted, ref } from 'vue'
 import toClipboard from 'src/lib/toClipboard'
 import { useRouter, useRoute } from 'vue-router'
+import _ from 'lodash'
 import notifyError from 'src/lib/notifyError'
 import CreateTaskModalButton from 'src/components/task/CreateTaskModalButton.vue'
 import EditTaskModalButton from 'src/components/task/EditTaskModalButton.vue'
@@ -272,8 +273,43 @@ function onRetry (evt: any, task: Task) {
   Object.assign(task, evt)
 }
 
+function taskUpdated (update: Task) {
+  for (const task of tasks.value) {
+    if (task.id === update.id) {
+      Object.assign(task, update)
+      break
+    }
+  }
+}
+
+function taskDeleted (deleted: Task) {
+  for (const task of tasks.value) {
+    if (task.id === deleted.id) {
+      tasks.value = _.without(tasks.value, task)
+      break
+    }
+  }
+}
+
+function taskCreated (task: Task) {
+  let rpp = 0
+  if (paginationModel.value && paginationModel.value.rowsPerPage) {
+    rpp = paginationModel.value.rowsPerPage
+  }
+  if ((rpp === 0) || (tasks.value.length < rpp)) {
+    tasks.value.push(task)
+  }
+  // ???
+  // else {
+  //   loadTasks()
+  // }
+}
+
 defineExpose({
-  loadTasks
+  loadTasks,
+  taskUpdated,
+  taskDeleted,
+  taskCreated
 })
 
 onMounted(async () => {
