@@ -7,7 +7,7 @@ Note, use this to exclude from JSON `json:"-"` : https://pkg.go.dev/encoding/jso
 cd crew
 go test
 
-TODO : task group progress (outside of pagination?)
+TODO : sigma View
 TODO : update godoc
 TODO : API (configuranly optional) authentication
 TODO : redis persistence : https://redis.com/blog/go-redis-official-redis-client/

@@ -171,6 +171,31 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			"count": slice_count,
 		})
 	})
+	e.GET("/api/v1/task_group/:task_group_id/progress", func(c echo.Context) error {
+		taskGroupId := c.Param("task_group_id")
+		group, found := taskGroupController.TaskGroups[taskGroupId]
+		if !found {
+			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
+		}
+
+		total := len(group.TaskOperators)
+		completed := 0
+
+		// Iterate all tasks
+		for _, operator := range group.TaskOperators {
+			if operator.Task.IsComplete {
+				completed++
+			}
+		}
+
+		completedPercent := 0.0
+		if total > 0 {
+			completedPercent = float64(completed) / float64(total)
+		}
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"completedPercent": completedPercent,
+		})
+	})
 	e.GET("/api/v1/task_group/:task_group_id/task/:task_id", func(c echo.Context) error {
 		taskGroupId := c.Param("task_group_id")
 		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
@@ -523,29 +548,30 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 	// Watch for updates in the task group contoller and deliver them to listening websockets
 	watchers := make(map[string]TaskGroupWatcher, 0)
 	go func() {
-		for {
-			select {
-			case taskGroupUpdate := <-taskGroupController.TaskGroupUpdates:
-				for _, watcher := range watchers {
-					if watcher.TaskGroupId == taskGroupUpdate.TaskGroup.Id {
-						evtJson, jsonErr := json.Marshal(taskGroupUpdate)
-						if jsonErr == nil && !inShutdown {
-							watcher.Channel <- string(evtJson)
-						}
-					}
-				}
-
-			case taskUpdate := <-taskGroupController.TaskUpdates:
-				for _, watcher := range watchers {
-					if watcher.TaskGroupId == taskUpdate.Task.TaskGroupId {
-						evtJson, jsonErr := json.Marshal(taskUpdate)
-						if jsonErr == nil && !inShutdown {
-							watcher.Channel <- string(evtJson)
-						}
+		for taskGroupUpdate := range taskGroupController.TaskGroupUpdates {
+			for _, watcher := range watchers {
+				if watcher.TaskGroupId == taskGroupUpdate.TaskGroup.Id {
+					evtJson, jsonErr := json.Marshal(taskGroupUpdate)
+					if jsonErr == nil && !inShutdown {
+						watcher.Channel <- string(evtJson)
 					}
 				}
 			}
 		}
+		fmt.Println("~~ taskGroupUpdates channel closed!")
+	}()
+	go func() {
+		for taskUpdate := range taskGroupController.TaskUpdates {
+			for _, watcher := range watchers {
+				if watcher.TaskGroupId == taskUpdate.Task.TaskGroupId {
+					evtJson, jsonErr := json.Marshal(taskUpdate)
+					if jsonErr == nil && !inShutdown {
+						watcher.Channel <- string(evtJson)
+					}
+				}
+			}
+		}
+		fmt.Println("~~ taskUpdates channel closed!")
 	}()
 
 	e.GET("/api/v1/task_group/:task_group_id/stream", func(c echo.Context) error {

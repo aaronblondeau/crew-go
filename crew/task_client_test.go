@@ -446,8 +446,8 @@ func TestMultipleChildOutput(t *testing.T) {
 	if parent.IsComplete != true {
 		t.Fatalf(`parent.IsComplete = %v, want true`, parent.IsComplete)
 	}
-	if len(parent.Children) != 4 {
-		t.Fatalf(`len(parent.Children) = %v, want 4`, len(parent.Children))
+	if len(parent.Children) != 1 {
+		t.Fatalf(`len(parent.Children) = %v, want 1`, len(parent.Children))
 	}
 
 	// Wait for child to complete

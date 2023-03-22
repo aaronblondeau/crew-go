@@ -64,6 +64,10 @@ export const useTaskGroupStore = defineStore('taskGroup', {
       const result = await api.post(`api/v1/task_group/${id}/resume`)
       return result.data
     },
+    async getTaskGroupProgress (id: string) : Promise<number> {
+      const result = await api.get(`api/v1/task_group/${id}/progress`)
+      return result.data.completedPercent
+    },
     async watchTaskGroup (id: string, onEvent: (evt: any) => void) : Promise<() => void> {
       const socket = new WebSocket(`ws://localhost:8090/api/v1/task_group/${id}/stream`)
 

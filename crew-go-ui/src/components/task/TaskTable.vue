@@ -70,7 +70,7 @@
           <q-td key="isComplete" :props="props">
             <span v-if="props.row.busyExecuting">
               <q-chip size="md" color="purple" text-color="white" icon="pending">
-                Executing
+                Executing ({{ props.row.remainingAttempts }})
               </q-chip>
             </span>
             <span v-else>
@@ -78,10 +78,10 @@
                 Yes
               </q-chip>
               <q-chip v-if="!props.row.isComplete && (!props.row.errors ||  props.row.errors.length === 0)" size="md" color="blue" text-color="white" icon="hourglass_empty">
-                No
+                No ({{ props.row.remainingAttempts }})
               </q-chip>
               <q-chip v-if="!props.row.isComplete && props.row.errors && props.row.errors.length > 0" size="md" color="orange" text-color="white" icon="warning">
-                No
+                No ({{ props.row.remainingAttempts }})
               </q-chip>
             </span>
           </q-td>

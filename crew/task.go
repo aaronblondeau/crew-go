@@ -386,14 +386,8 @@ func (operator *TaskOperator) Execute() {
 				expectedChildren := len(workerResponse.Children)
 				for createdChildren < expectedChildren {
 					for _, child := range workerResponse.Children {
-						// If worker didn't specify that current task is parent of the children, add current task as a parent
-						currentTaskIsParent := false
-						for _, parentId := range child.ParentIds {
-							if parentId == operator.Task.Id {
-								currentTaskIsParent = true
-							}
-						}
-						if !currentTaskIsParent {
+						// If worker didn't specify at least one parent for the child, add current task as a parent
+						if len(child.ParentIds) == 0 {
 							child.ParentIds = append(child.ParentIds, operator.Task.Id)
 						}
 						if workerResponse.ChildrenDelayInSeconds > 0 {
@@ -401,6 +395,14 @@ func (operator *TaskOperator) Execute() {
 						}
 						if workerResponse.WorkgroupDelayInSeconds > 0 && operator.Task.Workgroup != "" && child.Workgroup == operator.Task.Workgroup {
 							child.RunAfter = time.Now().Add(time.Duration(workerResponse.WorkgroupDelayInSeconds * int(time.Second)))
+						}
+						child.CreatedAt = time.Now()
+
+						if child.RemainingAttempts == 0 {
+							child.RemainingAttempts = 5
+						}
+						if child.ErrorDelayInSeconds == 0 {
+							child.ErrorDelayInSeconds = 30
 						}
 
 						// Add task will error if child exists or parents are missing

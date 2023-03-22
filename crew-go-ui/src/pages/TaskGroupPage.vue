@@ -45,6 +45,14 @@
     <q-tab-panels v-model="tab" animated>
       <q-tab-panel name="tasks">
 
+        <div class="q-pb-md">
+          <q-linear-progress color="green" size="25px" :value="completedPercent">
+            <div class="absolute-full flex flex-center">
+              <q-badge color="white" text-color="accent" :label="(completedPercent * 100).toFixed(2) + '%'" />
+            </div>
+          </q-linear-progress>
+        </div>
+
         <div class="q-gutter-md">
           <q-btn label="Reset" color="orange" @click="onInitReset" icon="skip_previous" />
           <q-btn label="Retry" color="purple" @click="onInitRetry" icon="restart_alt" />
@@ -160,15 +168,23 @@ const showResetDialog = ref(false)
 const resetRemainingAttempts = ref(5)
 const showRetryDialog = ref(false)
 const retryRemainingAttempts = ref(5)
+const completedPercent = ref(0.0)
 
 async function getTaskGroup () {
   try {
     if (taskGroupId.value) {
       taskGroup.value = await taskGroupStore.getTaskGroup(taskGroupId.value)
+      await updateCompletedPercent()
     }
   } catch (e) {
     notifyError(e)
   }
+}
+
+const throttledUpdateCompletedPercent = _.throttle(updateCompletedPercent, 5000)
+
+async function updateCompletedPercent () {
+  completedPercent.value = await taskGroupStore.getTaskGroupProgress(taskGroupId.value)
 }
 
 function onSave (updatedTaskGroup: TaskGroup) {
@@ -249,7 +265,7 @@ async function watchGroup () {
   unwatchGroup()
   console.log('~~ start watch', taskGroupId.value)
   cancelWatchGroup = await taskGroupStore.watchTaskGroup(taskGroupId.value, (event: any) => {
-    // console.log('~~ task group event', event)
+    console.log('~~ task group event', event)
 
     const payload = JSON.parse(event)
     if (payload.type === 'update' && _.has(payload, 'task_group')) {
@@ -269,6 +285,7 @@ async function watchGroup () {
     } else if (payload.type === 'create' && _.has(payload, 'task')) {
       taskTable.value?.taskCreated(payload.task)
     }
+    throttledUpdateCompletedPercent()
   })
 }
 

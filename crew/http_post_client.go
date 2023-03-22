@@ -89,6 +89,8 @@ func (client *HttpPostClient) Post(task *Task, taskGroup *TaskGroup) (response W
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
+	fmt.Println("~~ Worker Request", string(payloadJsonStr))
+
 	httpClient := &http.Client{}
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -107,7 +109,7 @@ func (client *HttpPostClient) Post(task *Task, taskGroup *TaskGroup) (response W
 	}
 
 	bodyString := string(bodyBytes)
-	fmt.Println("Worker Response", bodyString)
+	fmt.Println("~~ Worker Response", bodyString)
 
 	workerResp := WorkerResponse{}
 	jsonErr := json.Unmarshal(bodyBytes, &workerResp) // when logging code above is no longer needed : json.NewDecoder(resp.Body).Decode(&workerResp)

@@ -82,6 +82,8 @@ func (taskGroup *TaskGroup) PreloadTasks(tasks []*Task, client TaskClient) {
 // This method updates parent and child relationships within the group.
 // Use this after calling Operate on a task group.
 func (taskGroup *TaskGroup) AddTask(task *Task, client TaskClient) error {
+	task.TaskGroupId = taskGroup.Id
+
 	// Make sure task doesn't already exist
 	for _, op := range taskGroup.TaskOperators {
 		if op.Task.Id == task.Id {
