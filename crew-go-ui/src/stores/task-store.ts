@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { api } from 'boot/axios'
+import { NodeObject } from 'force-graph'
 
 export interface Task {
   id: string,
@@ -24,6 +25,7 @@ export interface Task {
   resumeWait: boolean
   retryWait: boolean
   resetWait: boolean
+  node: NodeObject
 }
 
 export interface ModifyTask {

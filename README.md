@@ -7,12 +7,15 @@ Note, use this to exclude from JSON `json:"-"` : https://pkg.go.dev/encoding/jso
 cd crew
 go test
 
-TODO : sigma View
 TODO : update godoc
+TODO : reset a task with children (resets all ancestors?)
 TODO : API (configuranly optional) authentication
 TODO : redis persistence : https://redis.com/blog/go-redis-official-redis-client/
 TODO : Figure out good value for TaskUpdates channel queue size
 TODO : Implement an (configurably optional) cleanup "cron" for removing old taskgroups
+TODO : Polish Readme
+TODO : Package for standalone use
+TODO : Package for embedded use
 
 Scaling Note:
 

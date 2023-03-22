@@ -25,6 +25,7 @@
         class="text-white gt-xs"
       >
         <q-tab name="tasks" icon="checklist" label="Tasks" />
+        <q-tab name="graph" icon="account_tree" label="Graph View" />
         <q-tab name="settings" icon="settings" label="Settings" />
       </q-tabs>
 
@@ -37,6 +38,7 @@
         class="text-white lt-sm"
       >
         <q-tab name="tasks" icon="checklist" />
+        <q-tab name="graph" icon="account_tree" />
         <q-tab name="settings" icon="settings" />
       </q-tabs>
       <q-space />
@@ -61,6 +63,24 @@
         </div>
 
         <TaskTable ref="taskTable" :task-group="taskGroup" class="q-mt-md" />
+      </q-tab-panel>
+      <q-tab-panel name="graph">
+        <div class="q-pb-md">
+          <q-linear-progress color="green" size="25px" :value="completedPercent">
+            <div class="absolute-full flex flex-center">
+              <q-badge color="white" text-color="accent" :label="(completedPercent * 100).toFixed(2) + '%'" />
+            </div>
+          </q-linear-progress>
+        </div>
+
+        <div class="q-gutter-md">
+          <q-btn label="Reset" color="orange" @click="onInitReset" icon="skip_previous" />
+          <q-btn label="Retry" color="purple" @click="onInitRetry" icon="restart_alt" />
+          <q-btn label="Pause" color="primary" @click="onPause" icon="pause" />
+          <q-btn label="Resume" color="primary" @click="onResume" icon="play_arrow" />
+        </div>
+
+        <TaskGraph ref="taskGraph" :task-group="taskGroup" class="q-mt-md" />
       </q-tab-panel>
       <q-tab-panel name="settings">
         <ModifyTaskGroupCard :taskGroup="taskGroup" :closable="false" @on-save="onSave" />
@@ -149,6 +169,7 @@ import notifyError from 'src/lib/notifyError'
 import ModifyTaskGroupCard from 'src/components/task-group/ModifyTaskGroupCard.vue'
 import DeleteTaskGroupModalButton from 'src/components/task-group/DeleteTaskGroupModalButton.vue'
 import TaskTable from 'src/components/task/TaskTable.vue'
+import TaskGraph from 'src/components/task/TaskGraph.vue'
 import { useQuasar } from 'quasar'
 
 const router = useRouter()
@@ -160,6 +181,7 @@ const taskGroupStore = useTaskGroupStore()
 const tab = ref(router.currentRoute.value.query.tab as string || 'tasks')
 const taskGroup = ref<TaskGroup | null>(null)
 const taskTable = ref<typeof TaskTable>()
+const taskGraph = ref<typeof TaskGraph>()
 const resetWait = ref(false)
 const retryWait = ref(false)
 const pauseWait = ref(false)
@@ -204,6 +226,7 @@ async function onReset () {
     resetWait.value = true
     await taskGroupStore.resetTaskGroup(taskGroupId.value, resetRemainingAttempts.value)
     await taskTable.value?.loadTasks()
+    await taskGraph.value?.loadTasks()
     showResetDialog.value = false
   } catch (e) {
     notifyError(e)
@@ -221,6 +244,7 @@ async function onRetry () {
     retryWait.value = true
     await taskGroupStore.retryTaskGroup(taskGroupId.value, retryRemainingAttempts.value)
     await taskTable.value?.loadTasks()
+    await taskGraph.value?.loadTasks()
     showRetryDialog.value = false
   } catch (e) {
     notifyError(e)
@@ -234,6 +258,7 @@ async function onPause () {
     pauseWait.value = true
     await taskGroupStore.pauseTaskGroup(taskGroupId.value)
     await taskTable.value?.loadTasks()
+    await taskGraph.value?.loadTasks()
   } catch (e) {
     notifyError(e)
   } finally {
@@ -246,6 +271,7 @@ async function onResume () {
     resumeWait.value = true
     await taskGroupStore.resumeTaskGroup(taskGroupId.value)
     await taskTable.value?.loadTasks()
+    await taskGraph.value?.loadTasks()
   } catch (e) {
     notifyError(e)
   } finally {
@@ -263,10 +289,7 @@ function unwatchGroup () {
 
 async function watchGroup () {
   unwatchGroup()
-  console.log('~~ start watch', taskGroupId.value)
   cancelWatchGroup = await taskGroupStore.watchTaskGroup(taskGroupId.value, (event: any) => {
-    console.log('~~ task group event', event)
-
     const payload = JSON.parse(event)
     if (payload.type === 'update' && _.has(payload, 'task_group')) {
       taskGroup.value = payload.task_group
@@ -280,10 +303,13 @@ async function watchGroup () {
       })
     } else if (payload.type === 'update' && _.has(payload, 'task')) {
       taskTable.value?.taskUpdated(payload.task)
+      taskGraph.value?.taskUpdated(payload.task)
     } else if (payload.type === 'delete' && _.has(payload, 'task')) {
       taskTable.value?.taskDeleted(payload.task)
+      taskGraph.value?.taskDeleted(payload.task)
     } else if (payload.type === 'create' && _.has(payload, 'task')) {
       taskTable.value?.taskCreated(payload.task)
+      taskGraph.value?.taskCreated(payload.task)
     }
     throttledUpdateCompletedPercent()
   })
