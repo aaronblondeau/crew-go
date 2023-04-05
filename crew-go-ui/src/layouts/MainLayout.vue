@@ -16,6 +16,9 @@
             <q-item>
               <q-btn stretch flat label="Task Groups" :to="{name: 'home'}" />
             </q-item>
+            <q-item>
+              <q-btn stretch flat label="Logout" @click="logout" />
+            </q-item>
           </q-list>
         </q-btn-dropdown>
 
@@ -29,5 +32,14 @@
 </template>
 
 <script setup lang="ts">
+import { useAuthStore } from 'src/stores/auth-store'
+import { useRouter } from 'vue-router'
 
+const router = useRouter()
+const authStore = useAuthStore()
+
+async function logout () {
+  await authStore.logout()
+  router.push({ name: 'login' })
+}
 </script>

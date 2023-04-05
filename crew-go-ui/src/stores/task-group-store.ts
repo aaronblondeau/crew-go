@@ -1,5 +1,8 @@
 import { defineStore } from 'pinia'
 import { api } from 'boot/axios'
+import { useAuthStore } from './auth-store'
+
+const authStore = useAuthStore()
 
 export interface TaskGroup {
   id: string
@@ -26,50 +29,89 @@ export const useTaskGroupStore = defineStore('taskGroup', {
           page,
           pageSize,
           search
+        },
+        headers: {
+          Authorization: `Bearer ${authStore.token}`
         }
       })
       return result.data
     },
     async getTaskGroup (id: string) : Promise<TaskGroup> {
-      const result = await api.get(`api/v1/task_group/${id}`)
+      const result = await api.get(`api/v1/task_group/${id}`, {
+        headers: {
+          Authorization: `Bearer ${authStore.token}`
+        }
+      })
       return result.data
     },
     async updateTaskGroup (id: string, payload: {name: string}) : Promise<TaskGroup> {
-      const result = await api.put(`api/v1/task_group/${id}`, payload)
+      const result = await api.put(`api/v1/task_group/${id}`, payload, {
+        headers: {
+          Authorization: `Bearer ${authStore.token}`
+        }
+      })
       return result.data
     },
     async createTaskGroup (id: string, name: string) : Promise<TaskGroup> {
       const result = await api.post('api/v1/task_groups', {
         id,
         name
+      }, {
+        headers: {
+          Authorization: `Bearer ${authStore.token}`
+        }
       })
       return result.data
     },
     async deleteTaskGroup (id: string) {
-      await api.delete(`api/v1/task_group/${id}`)
+      await api.delete(`api/v1/task_group/${id}`, {
+        headers: {
+          Authorization: `Bearer ${authStore.token}`
+        }
+      })
     },
     async resetTaskGroup (id: string, remainingAttempts = 5) : Promise<TaskGroup> {
-      const result = await api.post(`api/v1/task_group/${id}/reset`, { remainingAttempts })
+      const result = await api.post(`api/v1/task_group/${id}/reset`, { remainingAttempts }, {
+        headers: {
+          Authorization: `Bearer ${authStore.token}`
+        }
+      })
       return result.data
     },
     async retryTaskGroup (id: string, remainingAttempts = 5) : Promise<TaskGroup> {
-      const result = await api.post(`api/v1/task_group/${id}/retry`, { remainingAttempts })
+      const result = await api.post(`api/v1/task_group/${id}/retry`, { remainingAttempts }, {
+        headers: {
+          Authorization: `Bearer ${authStore.token}`
+        }
+      })
       return result.data
     },
     async pauseTaskGroup (id: string) : Promise<TaskGroup> {
-      const result = await api.post(`api/v1/task_group/${id}/pause`)
+      const result = await api.post(`api/v1/task_group/${id}/pause`, {}, {
+        headers: {
+          Authorization: `Bearer ${authStore.token}`
+        }
+      })
       return result.data
     },
     async resumeTaskGroup (id: string) : Promise<TaskGroup> {
-      const result = await api.post(`api/v1/task_group/${id}/resume`)
+      const result = await api.post(`api/v1/task_group/${id}/resume`, {}, {
+        headers: {
+          Authorization: `Bearer ${authStore.token}`
+        }
+      })
       return result.data
     },
     async getTaskGroupProgress (id: string) : Promise<number> {
-      const result = await api.get(`api/v1/task_group/${id}/progress`)
+      const result = await api.get(`api/v1/task_group/${id}/progress`, {
+        headers: {
+          Authorization: `Bearer ${authStore.token}`
+        }
+      })
       return result.data.completedPercent
     },
     async watchTaskGroup (id: string, onEvent: (evt: any) => void) : Promise<() => void> {
-      const socket = new WebSocket(`ws://localhost:8090/api/v1/task_group/${id}/stream`)
+      const socket = new WebSocket(`ws://localhost:8090/api/v1/task_group/${id}/stream/${authStore.token}`)
 
       socket.onopen = function () {
         console.log('~~ connected to task group stream')

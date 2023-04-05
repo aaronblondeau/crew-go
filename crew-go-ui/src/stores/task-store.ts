@@ -1,6 +1,9 @@
 import { defineStore } from 'pinia'
 import { api } from 'boot/axios'
 import { NodeObject } from 'force-graph'
+import { useAuthStore } from './auth-store'
+
+const authStore = useAuthStore()
 
 export interface Task {
   id: string,
@@ -57,39 +60,74 @@ export const useTaskStore = defineStore('task', {
           page,
           pageSize,
           search
+        },
+        headers: {
+          Authorization: `Bearer ${authStore.token}`
         }
       })
       return result.data
     },
     async getTask (taskGroupId: string, taskId: string) : Promise<Task> {
-      const result = await api.get(`api/v1/task_group/${taskGroupId}/task/${taskId}`)
+      const result = await api.get(`api/v1/task_group/${taskGroupId}/task/${taskId}`, {
+        headers: {
+          Authorization: `Bearer ${authStore.token}`
+        }
+      })
       return result.data
     },
     async updateTask (taskGroupId: string, taskId: string, payload: {name: string}) : Promise<Task> {
-      const result = await api.put(`api/v1/task_group/${taskGroupId}/task/${taskId}`, payload)
+      const result = await api.put(`api/v1/task_group/${taskGroupId}/task/${taskId}`, payload, {
+        headers: {
+          Authorization: `Bearer ${authStore.token}`
+        }
+      })
       return result.data
     },
     async createTask (taskGroupId: string, payload: ModifyTask) : Promise<Task> {
-      const result = await api.post(`api/v1/task_group/${taskGroupId}/tasks`, payload)
+      const result = await api.post(`api/v1/task_group/${taskGroupId}/tasks`, payload, {
+        headers: {
+          Authorization: `Bearer ${authStore.token}`
+        }
+      })
       return result.data
     },
     async deleteTask (taskGroupId: string, taskId: string) {
-      await api.delete(`api/v1/task_group/${taskGroupId}/task/${taskId}`)
+      await api.delete(`api/v1/task_group/${taskGroupId}/task/${taskId}`, {
+        headers: {
+          Authorization: `Bearer ${authStore.token}`
+        }
+      })
     },
     async pauseTask (taskGroupId: string, taskId: string) {
-      const result = await api.put(`api/v1/task_group/${taskGroupId}/task/${taskId}`, { isPaused: true })
+      const result = await api.put(`api/v1/task_group/${taskGroupId}/task/${taskId}`, { isPaused: true }, {
+        headers: {
+          Authorization: `Bearer ${authStore.token}`
+        }
+      })
       return result.data
     },
     async resumeTask (taskGroupId: string, taskId: string) {
-      const result = await api.put(`api/v1/task_group/${taskGroupId}/task/${taskId}`, { isPaused: false })
+      const result = await api.put(`api/v1/task_group/${taskGroupId}/task/${taskId}`, { isPaused: false }, {
+        headers: {
+          Authorization: `Bearer ${authStore.token}`
+        }
+      })
       return result.data
     },
     async resetTask (taskGroupId: string, taskId: string, remainingAttempts = 5) {
-      const result = await api.post(`api/v1/task_group/${taskGroupId}/task/${taskId}/reset`, { remainingAttempts })
+      const result = await api.post(`api/v1/task_group/${taskGroupId}/task/${taskId}/reset`, { remainingAttempts }, {
+        headers: {
+          Authorization: `Bearer ${authStore.token}`
+        }
+      })
       return result.data
     },
     async retryTask (taskGroupId: string, taskId: string, remainingAttempts = 5) {
-      const result = await api.post(`api/v1/task_group/${taskGroupId}/task/${taskId}/retry`, { remainingAttempts })
+      const result = await api.post(`api/v1/task_group/${taskGroupId}/task/${taskId}/retry`, { remainingAttempts }, {
+        headers: {
+          Authorization: `Bearer ${authStore.token}`
+        }
+      })
       return result.data
     }
   }

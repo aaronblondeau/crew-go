@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net/http"
+	"os"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,7 +21,7 @@ import (
 	"golang.org/x/net/websocket"
 )
 
-func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, taskClient TaskClient) *http.Server {
+func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, taskClient TaskClient, authMiddleware echo.MiddlewareFunc, loginFunc func(c echo.Context) error) *http.Server {
 	e := echo.New()
 	e.Use(middleware.CORS())
 	e.Static("/", "crew-go-ui/dist/spa")
@@ -28,6 +31,10 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 	e.GET("/healthz", func(c echo.Context) error {
 		return c.String(http.StatusOK, "Healthy!")
 	})
+	e.POST("/login", loginFunc)
+	e.GET("/authcheck", func(c echo.Context) error {
+		return c.String(http.StatusOK, "Authenticated!")
+	}, authMiddleware)
 	e.GET("/api/v1/task_groups", func(c echo.Context) error {
 		page := 1
 		if c.QueryParams().Has("page") {
@@ -91,7 +98,7 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			"taskGroups": sliced,
 			"count":      slice_count,
 		})
-	})
+	}, authMiddleware)
 	e.GET("/api/v1/task_group/:id", func(c echo.Context) error {
 		taskGroupId := c.Param("id")
 		group, found := taskGroupController.TaskGroups[taskGroupId]
@@ -99,7 +106,7 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
 		}
 		return c.JSON(http.StatusOK, group)
-	})
+	}, authMiddleware)
 	e.GET("/api/v1/task_group/:task_group_id/tasks", func(c echo.Context) error {
 		page := 1
 		if c.QueryParams().Has("page") {
@@ -170,7 +177,7 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			"tasks": sliced,
 			"count": slice_count,
 		})
-	})
+	}, authMiddleware)
 	e.GET("/api/v1/task_group/:task_group_id/progress", func(c echo.Context) error {
 		taskGroupId := c.Param("task_group_id")
 		group, found := taskGroupController.TaskGroups[taskGroupId]
@@ -195,7 +202,7 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 		return c.JSON(http.StatusOK, map[string]interface{}{
 			"completedPercent": completedPercent,
 		})
-	})
+	}, authMiddleware)
 	e.GET("/api/v1/task_group/:task_group_id/task/:task_id", func(c echo.Context) error {
 		taskGroupId := c.Param("task_group_id")
 		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
@@ -208,7 +215,7 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			return c.String(http.StatusNotFound, fmt.Sprintf("Task with id %v not found in group %v.", taskId, taskGroupId))
 		}
 		return c.JSON(http.StatusOK, operator.Task)
-	})
+	}, authMiddleware)
 	e.POST("/api/v1/task_groups", func(c echo.Context) error {
 		// Create a task group
 		group := NewTaskGroup("", "", taskGroupController)
@@ -224,7 +231,7 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			return c.String(http.StatusBadRequest, group_add_err.Error())
 		}
 		return c.JSON(http.StatusOK, group)
-	})
+	}, authMiddleware)
 	e.POST("/api/v1/task_group/:task_group_id/tasks", func(c echo.Context) error {
 		// Create a task
 		taskGroupId := c.Param("task_group_id")
@@ -263,7 +270,7 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			return c.String(http.StatusBadRequest, err.Error())
 		}
 		return c.JSON(http.StatusOK, task)
-	})
+	}, authMiddleware)
 	e.DELETE("/api/v1/task_group/:task_group_id", func(c echo.Context) error {
 		// Delete a task group
 		taskGroupId := c.Param("task_group_id")
@@ -279,7 +286,7 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			"id":      taskGroupId,
 			"deleted": true,
 		})
-	})
+	}, authMiddleware)
 	e.DELETE("/api/v1/task_group/:task_group_id/task/:task_id", func(c echo.Context) error {
 		// Delete a task
 		taskGroupId := c.Param("task_group_id")
@@ -297,7 +304,7 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			"id":      taskId,
 			"deleted": true,
 		})
-	})
+	}, authMiddleware)
 	e.POST("/api/v1/task_group/:task_group_id/reset", func(c echo.Context) error {
 		// Reset a task group.  If the group has seed tasks, all non-seed tasks are removed.  Then all remaining tasks within the group are reset.
 		taskGroupId := c.Param("task_group_id")
@@ -321,7 +328,7 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			return c.String(http.StatusBadRequest, resetErr.Error())
 		}
 		return c.JSON(http.StatusOK, group)
-	})
+	}, authMiddleware)
 	e.POST("/api/v1/task_group/:task_group_id/retry", func(c echo.Context) error {
 		// Force a retry of all incomplete tasks in a task group by incrementing their remainingAttempts value.
 		taskGroupId := c.Param("task_group_id")
@@ -345,7 +352,7 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			return c.String(http.StatusBadRequest, err.Error())
 		}
 		return c.JSON(http.StatusOK, group)
-	})
+	}, authMiddleware)
 	e.POST("/api/v1/task_group/:task_group_id/pause", func(c echo.Context) error {
 		// Pause all tasks in group, fan-in updates?
 		taskGroupId := c.Param("task_group_id")
@@ -359,7 +366,7 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			return c.String(http.StatusBadRequest, err.Error())
 		}
 		return c.JSON(http.StatusOK, group)
-	})
+	}, authMiddleware)
 	e.POST("/api/v1/task_group/:task_group_id/resume", func(c echo.Context) error {
 		// Resume all tasks in group, fan-in updates?
 		taskGroupId := c.Param("task_group_id")
@@ -373,7 +380,7 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			return c.String(http.StatusBadRequest, err.Error())
 		}
 		return c.JSON(http.StatusOK, group)
-	})
+	}, authMiddleware)
 	e.POST("/api/v1/task_group/:task_group_id/task/:task_id/reset", func(c echo.Context) error {
 		// Reset a task as if it had never been run.  Reject if BusyExecuting.
 		taskGroupId := c.Param("task_group_id")
@@ -408,7 +415,7 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			return c.String(http.StatusBadRequest, updateError.Error())
 		}
 		return c.JSON(http.StatusOK, operator.Task)
-	})
+	}, authMiddleware)
 	e.POST("/api/v1/task_group/:task_group_id/task/:task_id/retry", func(c echo.Context) error {
 		// Force a retry of a task by updating its remainingAttempts value.
 		taskGroupId := c.Param("task_group_id")
@@ -447,7 +454,7 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 		}
 
 		return c.JSON(http.StatusOK, operator.Task)
-	})
+	}, authMiddleware)
 	e.PUT("/api/v1/task_group/:task_group_id", func(c echo.Context) error {
 		// Update a task group
 		taskGroupId := c.Param("task_group_id")
@@ -465,7 +472,7 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			return c.String(http.StatusBadRequest, updateErr.Error())
 		}
 		return c.JSON(http.StatusOK, group)
-	})
+	}, authMiddleware)
 	e.PUT("/api/v1/task_group/:task_group_id/task/:task_id", func(c echo.Context) error {
 		// Update a task. Do not update and throw error if Task.BusyExecuting!
 		taskGroupId := c.Param("task_group_id")
@@ -541,6 +548,110 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 		}
 
 		return c.JSON(http.StatusOK, operator.Task)
+	}, authMiddleware)
+
+	// Demo worker endpoints
+	e.POST("/demo/worker-a", func(c echo.Context) error {
+		fmt.Println("~~ Demo worker A has been called!")
+		time.Sleep(5 * time.Second)
+
+		payload := map[string]interface{}{}
+		json.NewDecoder(c.Request().Body).Decode(&payload)
+		throw := ""
+		if payload["input"] != nil && payload["input"].(map[string]interface{})["throw"] != nil {
+			throw = payload["input"].(map[string]interface{})["throw"].(string)
+		}
+		if throw != "" {
+			return c.JSON(http.StatusInternalServerError, map[string]interface{}{
+				"error": throw,
+			})
+		}
+
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"output": map[string]interface{}{
+				"message": "Worker A was here!",
+				"at":      time.Now().Format(time.RFC3339),
+			},
+		})
+	})
+	// Worker B is pretty much identical to worker A
+	e.POST("/demo/worker-b", func(c echo.Context) error {
+		fmt.Println("~~ Demo worker B has been called!")
+		time.Sleep(7 * time.Second)
+
+		payload := map[string]interface{}{}
+		json.NewDecoder(c.Request().Body).Decode(&payload)
+		throw := ""
+		if payload["input"] != nil && payload["input"].(map[string]interface{})["throw"] != nil {
+			throw = payload["input"].(map[string]interface{})["throw"].(string)
+		}
+		if throw != "" {
+			return c.JSON(http.StatusInternalServerError, map[string]interface{}{
+				"error": throw,
+			})
+		}
+
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"output": map[string]interface{}{
+				"message": "Worker B was here!",
+				"at":      time.Now().Format(time.RFC3339),
+			},
+		})
+	})
+	// Worker C returns child (continuation) tasks
+	e.POST("/demo/worker-c", func(c echo.Context) error {
+		fmt.Println("~~ Demo worker C has been called!")
+		time.Sleep(2 * time.Second)
+
+		payload := map[string]interface{}{}
+		json.NewDecoder(c.Request().Body).Decode(&payload)
+		throw := ""
+		if payload["input"] != nil && payload["input"].(map[string]interface{})["throw"] != nil {
+			throw = payload["input"].(map[string]interface{})["throw"].(string)
+		}
+		if throw != "" {
+			return c.JSON(http.StatusInternalServerError, map[string]interface{}{
+				"error": throw,
+			})
+		}
+
+		// create string of random characters
+		aId := fmt.Sprintf("A-%v", rand.Int())
+		bId := fmt.Sprintf("B-%v", rand.Int())
+		cId := fmt.Sprintf("C-%v", rand.Int())
+		dId := fmt.Sprintf("D-%v", rand.Int())
+
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"output": map[string]interface{}{
+				"message": "Worker C was here!",
+				"at":      time.Now().Format(time.RFC3339),
+			},
+			"children": []map[string]interface{}{
+				{
+					"id":     aId,
+					"worker": "worker-a",
+					"name":   "Child A",
+				},
+				{
+					"id":        bId,
+					"parentIds": [1]string{aId},
+					"worker":    "worker-a",
+					"name":      "Child B",
+				},
+				{
+					"id":        cId,
+					"parentIds": [1]string{aId},
+					"worker":    "worker-b",
+					"name":      "Child C",
+				},
+				{
+					"id":        dId,
+					"parentIds": [2]string{bId, cId},
+					"worker":    "worker-a",
+					"name":      "Child D",
+				},
+			},
+		})
 	})
 
 	inShutdown := false
@@ -574,7 +685,7 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 		fmt.Println("~~ taskUpdates channel closed!")
 	}()
 
-	e.GET("/api/v1/task_group/:task_group_id/stream", func(c echo.Context) error {
+	e.GET("/api/v1/task_group/:task_group_id/stream/:token", func(c echo.Context) error {
 		taskGroupId := c.Param("task_group_id")
 		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
 		if !groupFound {
@@ -630,10 +741,25 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 		fmt.Println("~~ Websocket closed", requestId)
 		delete(watchers, requestId)
 		return nil
-	})
+	}, authMiddleware)
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8090"
+	}
+
+	host := os.Getenv("HOST")
+	if host == "" {
+		// use localhost on windows, 0.0.0.0 elsewhere
+		if runtime.GOOS == "windows" {
+			host = "localhost"
+		} else {
+			host = "0.0.0.0"
+		}
+	}
 
 	srv := &http.Server{
-		Addr:    "localhost:8090",
+		Addr:    host + ":" + port,
 		Handler: e,
 	}
 

@@ -16,11 +16,17 @@ type HttpPostClient struct {
 
 func NewHttpPostClient() *HttpPostClient {
 	urlGenerator := func(task *Task) (url string, err error) {
-		baseUrl, ok := os.LookupEnv("CREW_WORKER_BASE_URL")
-		if ok {
-			return baseUrl + task.Worker, nil
+		baseUrl := os.Getenv("CREW_WORKER_BASE_URL")
+		if baseUrl == "" {
+			port := os.Getenv("PORT")
+			if port == "" {
+				port = "8090"
+			}
+			baseUrl = "http://localhost:" + port + "/demo/"
+			fmt.Println("CREW_WORKER_BASE_URL not set, defaulting to " + baseUrl)
+
 		}
-		return "", errors.New("CREW_WORKER_BASE_URL environment variable is not set")
+		return baseUrl + task.Worker, nil
 	}
 	client := HttpPostClient{
 		UrlForTask: urlGenerator,
