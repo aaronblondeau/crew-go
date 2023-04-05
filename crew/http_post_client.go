@@ -10,10 +10,12 @@ import (
 	"os"
 )
 
+// HttpPostClient delivers tasks to workers via http post.
 type HttpPostClient struct {
 	UrlForTask func(task *Task) (url string, err error) `json:"-"`
 }
 
+// NewHttpPostClient creates a new HttpPostClient.
 func NewHttpPostClient() *HttpPostClient {
 	urlGenerator := func(task *Task) (url string, err error) {
 		baseUrl := os.Getenv("CREW_WORKER_BASE_URL")
@@ -34,6 +36,7 @@ func NewHttpPostClient() *HttpPostClient {
 	return &client
 }
 
+// WorkerPayload defines the input sent to a worker (post body).
 type WorkerPayload struct {
 	Input   interface{}                 `json:"input"`
 	Worker  interface{}                 `json:"worker"`
@@ -41,6 +44,7 @@ type WorkerPayload struct {
 	TaskId  string                      `json:"taskId"`
 }
 
+// WorkerPayloadParentResult defines the schema for output from a worker.
 type WorkerPayloadParentResult struct {
 	TaskId string      `json:"taskId"`
 	Worker string      `json:"worker"`
@@ -48,11 +52,9 @@ type WorkerPayloadParentResult struct {
 	Output interface{} `json:"output"`
 }
 
+// Post delivers a task to a worker.
 func (client *HttpPostClient) Post(task *Task, taskGroup *TaskGroup) (response WorkerResponse, err error) {
-	// Post body should be
-	// input, parents, taskId
-	// where parents = {taskId, worker, input, output}
-
+	// Start preparing the task input by gathering info from parents
 	payloadParents := []WorkerPayloadParentResult{}
 
 	// Get each parent and add result
@@ -85,24 +87,25 @@ func (client *HttpPostClient) Post(task *Task, taskGroup *TaskGroup) (response W
 		return WorkerResponse{}, urlError
 	}
 
+	// Build the request
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(payloadBytes))
-
 	authHeader, ok := os.LookupEnv("CREW_WORKER_AUTHORIZATION_HEADER")
 	if ok {
 		req.Header.Set("Authorization", authHeader)
 	}
-
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	fmt.Println("~~ Worker Request", string(payloadJsonStr))
+	// fmt.Println("~~ Worker Request", string(payloadJsonStr))
 
+	// Send the request
 	httpClient := &http.Client{}
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return WorkerResponse{}, err
 	}
 
+	// Read the response
 	defer resp.Body.Close()
 	bodyBytes, bodyErr := io.ReadAll(resp.Body)
 	if bodyErr != nil {
@@ -114,9 +117,10 @@ func (client *HttpPostClient) Post(task *Task, taskGroup *TaskGroup) (response W
 		return WorkerResponse{}, errors.New(string(bodyBytes))
 	}
 
-	bodyString := string(bodyBytes)
-	fmt.Println("~~ Worker Response", bodyString)
+	// bodyString := string(bodyBytes)
+	// fmt.Println("~~ Worker Response", bodyString)
 
+	// Parse the response
 	workerResp := WorkerResponse{}
 	jsonErr := json.Unmarshal(bodyBytes, &workerResp) // when logging code above is no longer needed : json.NewDecoder(resp.Body).Decode(&workerResp)
 	if jsonErr != nil {

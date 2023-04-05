@@ -5,6 +5,7 @@ import (
 	"time"
 )
 
+// WorkerResponse defines the schema of output returned from workers.
 type WorkerResponse struct {
 	Output                  interface{} `json:"output"`
 	Children                []*Task     `json:"children"`
@@ -13,6 +14,7 @@ type WorkerResponse struct {
 	Error                   interface{} `json:"error"`
 }
 
+// TaskClient defines the interface for delivering tasks to workers.
 type TaskClient interface {
 	Post(task *Task, taskGroup *TaskGroup) (response WorkerResponse, err error)
 }
@@ -44,6 +46,7 @@ type Task struct {
 	// assignedAt
 }
 
+// TaskUpdate defines the data emitted whenever a task is updated.
 type TaskUpdate struct {
 	Update         map[string]interface{}
 	UpdateComplete chan error
@@ -64,13 +67,13 @@ type TaskOperator struct {
 	Client               TaskClient
 }
 
+// NewTaskOperator creates a new TaskOperator.
 func NewTaskOperator(task *Task, taskGroup *TaskGroup) *TaskOperator {
 	execTimer := time.NewTimer(1000 * time.Second)
 	execTimer.Stop()
 	evalTimer := time.NewTimer(1000 * time.Second)
 	evalTimer.Stop()
 
-	// client := NewHttpPostClient()
 	t := TaskOperator{
 		Task:                 task,
 		TaskGroup:            taskGroup,
@@ -81,7 +84,6 @@ func NewTaskOperator(task *Task, taskGroup *TaskGroup) *TaskOperator {
 		ParentCompleteEvents: make(chan *Task, len(task.Children)),
 		Executing:            make(chan bool),
 		Terminated:           make(chan bool),
-		//Client:               client,
 	}
 	// Don't let initial timer run
 	t.CancelExecute()
@@ -93,17 +95,14 @@ func NewTaskOperator(task *Task, taskGroup *TaskGroup) *TaskOperator {
 // map to all other tasks (in group) (so we can look up parent ids, send events to children)
 // map to channels
 func (operator *TaskOperator) Operate() {
-	// TODO - multi-threaded way to ensure Operate
-	// only gets called once?
+	// TODO - do we need a multi-threaded way to ensure Operate only gets called once?
 	if operator.Operating {
 		return
 	}
 	operator.Operating = true
 
-	fmt.Println("About to operate")
 	// All of the Task's lifecycle should live in this goroutine
 	go func() {
-		fmt.Println("Operating")
 		// Continuously handle channel events (till we get an event on Shutdown)
 		for {
 			select {
@@ -251,14 +250,12 @@ func (operator *TaskOperator) Operate() {
 // Evaluate determines if a Task is eligible to be executed and begins
 // an execution timer if it is.
 func (operator *TaskOperator) Evaluate() {
-	fmt.Println("Evaluate")
 	// Task execution workflow starts here!
 	// This code needs to run whenever exciting things happen to a task:
 	// - Task is paused/unpaused
 	// - Task is Modified
 	// - Task's group is paused/unpaused
 	// - One of task's parents have completed
-	// ...
 
 	// Check if task is ready to execute:
 	taskCanExecute := operator.Task.CanExecute(operator.TaskGroup)
@@ -330,9 +327,7 @@ func (operator *TaskOperator) Execute() {
 
 		select {
 		case operator.Executing <- true:
-			fmt.Println("sent executing(true) event")
 		default:
-			fmt.Println("no executing event sent")
 		}
 
 		// emit update event
@@ -461,7 +456,7 @@ func (operator *TaskOperator) Execute() {
 		}
 
 		if workerResponse.WorkgroupDelayInSeconds > 0 && operator.Task.Workgroup != "" {
-			operator.TaskGroup.Controller.DelayWorkgroup(operator.Task.Workgroup, workerResponse.WorkgroupDelayInSeconds, operator.TaskGroup.Id)
+			operator.TaskGroup.Controller.DelayWorkgroup(operator.Task.Workgroup, workerResponse.WorkgroupDelayInSeconds)
 		}
 
 		if workerResponse.ChildrenDelayInSeconds > 0 {
@@ -495,9 +490,7 @@ func (operator *TaskOperator) Execute() {
 
 		select {
 		case operator.Executing <- false:
-			fmt.Println("sent executing(false) event")
 		default:
-			fmt.Println("no executing event sent")
 		}
 
 		// When a task is completed, find all children and send their operator an ParentCompleteEvents

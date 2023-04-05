@@ -7,6 +7,7 @@ import (
 	"strings"
 )
 
+// TaskStorage defines the methods required for implementing crew's task storage interface.
 type TaskStorage interface {
 	SaveTask(group *TaskGroup, task *Task) (err error)
 	DeleteTask(group *TaskGroup, task *Task) (err error)
@@ -17,22 +18,27 @@ type TaskStorage interface {
 
 // Filesystem Storage (JSON)
 
+// JsonFilesystemTaskStorage stores tasks in the filesystem as JSON files.
 type JsonFilesystemTaskStorage struct {
 	BasePath string
 }
 
+// TaskPath returns the path to a task's JSON file.
 func (storage *JsonFilesystemTaskStorage) TaskPath(group *TaskGroup, task *Task) string {
 	return storage.TaskGroupDir(group) + "/" + task.Id + ".json"
 }
 
+// TaskGroupDir returns the path to a task group's directory.
 func (storage *JsonFilesystemTaskStorage) TaskGroupDir(group *TaskGroup) string {
 	return storage.BasePath + "/task_groups/" + group.Id
 }
 
+// TaskGroupPath returns the path to a task group's JSON file.
 func (storage *JsonFilesystemTaskStorage) TaskGroupPath(group *TaskGroup) string {
 	return storage.TaskGroupDir(group) + "/group.json"
 }
 
+// SaveTask saves a task to the filesystem.
 func (storage *JsonFilesystemTaskStorage) SaveTask(group *TaskGroup, task *Task) (err error) {
 	if task.IsDeleting {
 		// Avoid re-creating a task that is getting deleted
@@ -47,6 +53,7 @@ func (storage *JsonFilesystemTaskStorage) SaveTask(group *TaskGroup, task *Task)
 	return writeErr
 }
 
+// DeleteTask deletes a task from the filesystem.
 func (storage *JsonFilesystemTaskStorage) DeleteTask(group *TaskGroup, task *Task) (err error) {
 	filePath := storage.TaskPath(group, task)
 	_, statError := os.Stat(filePath)
@@ -61,6 +68,7 @@ func (storage *JsonFilesystemTaskStorage) DeleteTask(group *TaskGroup, task *Tas
 	return removeError
 }
 
+// SaveTaskGroup saves a task group to the filesystem.
 func (storage *JsonFilesystemTaskStorage) SaveTaskGroup(group *TaskGroup) (err error) {
 	if group.IsDeleting {
 		// Avoid re-creating a group that is getting deleted
@@ -81,6 +89,7 @@ func (storage *JsonFilesystemTaskStorage) SaveTaskGroup(group *TaskGroup) (err e
 	return writeErr
 }
 
+// DeleteTaskGroup deletes a task group from the filesystem.
 func (storage *JsonFilesystemTaskStorage) DeleteTaskGroup(group *TaskGroup) (err error) {
 	// Since we're using os.RemoveAll(), make sure that there is a BasePath set
 	if (storage.BasePath == "") || (storage.BasePath == "/") {
@@ -90,13 +99,12 @@ func (storage *JsonFilesystemTaskStorage) DeleteTaskGroup(group *TaskGroup) (err
 	if (groupDir == "") || (groupDir == "/") {
 		panic("Bad group directory - could delete everything!")
 	}
-	// fmt.Println("~~ Would os.RemoveAll", groupDir)
-	// return nil
 
 	removeError := os.RemoveAll(groupDir)
 	return removeError
 }
 
+// Bootstrap loads all task groups and tasks from the filesystem.
 func (storage *JsonFilesystemTaskStorage) Bootstrap(shouldOperate bool, client TaskClient) (taskGroupController *TaskGroupController, err error) {
 	taskGroupController = NewTaskGroupController(storage)
 
@@ -181,6 +189,7 @@ func (storage *JsonFilesystemTaskStorage) Bootstrap(shouldOperate bool, client T
 	return
 }
 
+// NewJsonFilesystemTaskStorage creates a new JsonFilesystemTaskStorage.
 func NewJsonFilesystemTaskStorage(basePath string) *JsonFilesystemTaskStorage {
 	storage := JsonFilesystemTaskStorage{
 		BasePath: basePath,
@@ -190,34 +199,41 @@ func NewJsonFilesystemTaskStorage(basePath string) *JsonFilesystemTaskStorage {
 
 // Memory Storage
 
+// MemoryTaskStorage is a task storage that does not persist tasks. This is meant for use in tests.
 type MemoryTaskStorage struct {
 }
 
+// SaveTask does nothing.
 func (storage *MemoryTaskStorage) SaveTask(group *TaskGroup, task *Task) (err error) {
 	// Do nothing
 	return nil
 }
 
+// DeleteTask does nothing.
 func (storage *MemoryTaskStorage) DeleteTask(group *TaskGroup, task *Task) (err error) {
 	// Do nothing
 	return nil
 }
 
+// SaveTaskGroup does nothing.
 func (storage *MemoryTaskStorage) SaveTaskGroup(group *TaskGroup) (err error) {
 	// Do nothing
 	return nil
 }
 
+// DeleteTaskGroup does nothing.
 func (storage *MemoryTaskStorage) DeleteTaskGroup(group *TaskGroup) (err error) {
 	// Do nothing
 	return nil
 }
 
+// Bootstrap creates an empty task group controller.
 func (storage *MemoryTaskStorage) Bootstrap(shouldOperate bool, client TaskClient) (taskGroupController *TaskGroupController, err error) {
 	controller := NewTaskGroupController(storage)
 	return controller, nil
 }
 
+// NewMemoryTaskStorage creates a new MemoryTaskStorage.
 func NewMemoryTaskStorage() *MemoryTaskStorage {
 	storage := MemoryTaskStorage{}
 	return &storage

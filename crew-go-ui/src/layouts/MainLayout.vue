@@ -10,6 +10,7 @@
         </q-toolbar-title>
 
         <q-btn stretch flat label="Task Groups" class="gt-sm" :to="{name: 'home'}" />
+        <q-btn stretch flat label="Logout" class="gt-sm" @click="logout" />
 
         <q-btn-dropdown stretch flat class="lt-md" dropdown-icon="more_vert">
           <q-list>

@@ -21,13 +21,16 @@ import (
 	"golang.org/x/net/websocket"
 )
 
+// ServeRestApi starts the REST API server.
+// wg: A waitgroup that the server can use to signal when it is done.
+// taskGroupController: The root task group controller to use to manage all tasks and task groups.
+// taskClient: The client to use to execute tasks.
+// authMiddleware: The echo middleware function that will be used to authenticate API calls.
+// loginFunc: The function that will be used to handle login requests.
 func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, taskClient TaskClient, authMiddleware echo.MiddlewareFunc, loginFunc func(c echo.Context) error) *http.Server {
 	e := echo.New()
 	e.Use(middleware.CORS())
 	e.Static("/", "crew-go-ui/dist/spa")
-	// e.GET("/", func(c echo.Context) error {
-	// 	return c.String(http.StatusOK, "Hello, World!")
-	// })
 	e.GET("/healthz", func(c echo.Context) error {
 		return c.String(http.StatusOK, "Healthy!")
 	})
@@ -255,7 +258,6 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 		task.TaskGroupId = group.Id
 
 		// If parent ids are present validate that all parents exist
-		fmt.Println("Got task parents", task.ParentIds)
 		if len(task.ParentIds) > 0 {
 			for _, parentId := range task.ParentIds {
 				_, found = group.TaskOperators[parentId]
@@ -631,6 +633,7 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 					"id":     aId,
 					"worker": "worker-a",
 					"name":   "Child A",
+					// Input can go here too!
 				},
 				{
 					"id":        bId,
@@ -669,7 +672,6 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 				}
 			}
 		}
-		fmt.Println("~~ taskGroupUpdates channel closed!")
 	}()
 	go func() {
 		for taskUpdate := range taskGroupController.TaskUpdates {
@@ -682,7 +684,6 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 				}
 			}
 		}
-		fmt.Println("~~ taskUpdates channel closed!")
 	}()
 
 	e.GET("/api/v1/task_group/:task_group_id/stream/:token", func(c echo.Context) error {
@@ -706,8 +707,6 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			}
 			watchers[requestId] = watch
 
-			fmt.Println("~~ Websocket opened", requestId)
-
 			// Listen for messages (or close events) from the client
 			go func() {
 				for {
@@ -723,13 +722,11 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 						}
 						return
 					}
-					// We don't do anything with messages from the client yet
-					fmt.Println("~~ Websocket received", requestId, msg)
+					// We don't do anything with messages received from the client
 				}
 			}()
 
 			for msg := range sink {
-				// fmt.Println("~~ Sending", msg)
 				// When we get a message on this socket's output channel, write to the websocket
 				err := websocket.Message.Send(ws, msg)
 				if err != nil {
@@ -738,7 +735,6 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 				}
 			}
 		}).ServeHTTP(c.Response(), c.Request())
-		fmt.Println("~~ Websocket closed", requestId)
 		delete(watchers, requestId)
 		return nil
 	}, authMiddleware)
@@ -770,8 +766,7 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 		}
 		inShutdown = true
 		// Shutdown all watchers
-		for requestId, watcher := range watchers {
-			fmt.Println("~~ Closing watcher", requestId)
+		for _, watcher := range watchers {
 			close(watcher.Channel)
 		}
 		log.Println("ServeRestApi Stopped")
@@ -780,6 +775,7 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 	return srv
 }
 
+// TaskGroupWatcher is used to collect events from the task group controller and deliver them to a websocket.
 type TaskGroupWatcher struct {
 	TaskGroupId string
 	Channel     chan string

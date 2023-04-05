@@ -2,27 +2,27 @@ package crew
 
 import (
 	"errors"
-	"fmt"
 	"time"
 )
 
-func init() {
-	fmt.Println("Crew package initialized - do db migrations?")
-}
+// func init() {
+// 	fmt.Println("Crew package initialized - do db migrations?")
+// }
 
-// A TaskUpdateEvent notifies listeners of changes to a TaskGroup's state.
+// TaskUpdateEvent defines the data emitted when a task is updated.
 type TaskUpdateEvent struct {
 	Event string `json:"type"`
 	Task  Task   `json:"task"`
 }
 
+// WorkgroupDelayEvent defines the data emitted when a workgroup is delayed.
 type WorkgroupDelayEvent struct {
 	Workgroup         string `json:"workgroup"`
 	DelayInSeconds    int    `json:"delayInSeconds"`
 	OriginTaskGroupId string `json:"originTaskGroupId"`
 }
 
-// A TaskGroup represents a collection of all the tasks required to complete a body of work.
+// TaskGroup represents a collection of all the tasks required to complete a body of work.
 type TaskGroup struct {
 	Id            string                   `json:"id"`
 	Name          string                   `json:"name"`
@@ -33,6 +33,7 @@ type TaskGroup struct {
 	IsDeleting    bool                     `json:"-"`
 }
 
+// NewTaskGroup creates a new TaskGroup.
 func NewTaskGroup(id string, name string, controller *TaskGroupController) *TaskGroup {
 	tg := TaskGroup{
 		Id:            id,
@@ -240,6 +241,7 @@ func (taskGroup *TaskGroup) Reset(remainingAttempts int, updateComplete chan err
 	return nil
 }
 
+// UpdateAllTasks updates all tasks in the group with the given update.
 func (taskGroup *TaskGroup) UpdateAllTasks(update map[string]interface{}) error {
 	for _, op := range taskGroup.TaskOperators {
 		updateComplete := make(chan error)
@@ -256,6 +258,7 @@ func (taskGroup *TaskGroup) UpdateAllTasks(update map[string]interface{}) error 
 	return nil
 }
 
+// RetryAllTasks retries all tasks in the group with the given remaining attempts.
 func (taskGroup *TaskGroup) RetryAllTasks(remainingAttempts int) error {
 	for _, op := range taskGroup.TaskOperators {
 		if !op.Task.IsComplete {
@@ -274,10 +277,12 @@ func (taskGroup *TaskGroup) RetryAllTasks(remainingAttempts int) error {
 	return nil
 }
 
+// PauseAllTasks pauses all tasks in the group.
 func (taskGroup *TaskGroup) PauseAllTasks() error {
 	return taskGroup.UpdateAllTasks(map[string]interface{}{"isPaused": true})
 }
 
+// UnPauseAllTasks unpauses all tasks in the group.
 func (taskGroup *TaskGroup) UnPauseAllTasks() error {
 	return taskGroup.UpdateAllTasks(map[string]interface{}{"isPaused": false})
 }
