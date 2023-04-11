@@ -147,5 +147,3 @@ TODO : verify that workgroup pause works across all task groups in the node (???
 TODO : duplicate merge in all task groups in the node (and update readme above)
 TODO : redis (KeyDB) persistence : (https://docs.keydb.dev/) https://redis.com/blog/go-redis-official-redis-client/ 
 TODO : Implement an (configurably optional) cleanup "cron" for removing old taskgroups
-TODO : Package for standalone use
-TODO : Package for embedded use
