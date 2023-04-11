@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/md5"
+	"embed"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -25,6 +26,9 @@ type LoginCredentials struct {
 type LoginResponse struct {
 	Token string `json:"token"`
 }
+
+//go:embed crew-go-ui/dist/spa
+var embededFiles embed.FS
 
 func main() {
 	cwd, _ := os.Getwd()
@@ -100,7 +104,7 @@ func main() {
 		}
 	}
 
-	srv := crew.ServeRestApi(httpServerExitDone, taskGroupsOperator, client, authMiddleware, loginFunc)
+	srv := crew.ServeRestApi(httpServerExitDone, taskGroupsOperator, client, embededFiles, authMiddleware, loginFunc)
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	go func() {

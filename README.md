@@ -20,6 +20,12 @@ go get
 go run main.go
 ```
 
+Note, to run service while serving UI from local filesystem, use:
+
+```
+go run main.go live
+```
+
 To run the UI (built with [quasar](https://quasar.dev/)))
 
 ```
@@ -136,7 +142,6 @@ Crew is designed to help manage rate limit errors via workgroups.  When a rate l
 
 #### Dev Todos
 
-TODO : exe test, embed UI in exe?
 TODO : reset a task with children (resets all ancestors?)
 TODO : verify that workgroup pause works across all task groups in the node (???)
 TODO : duplicate merge in all task groups in the node (and update readme above)

@@ -1,9 +1,11 @@
 package crew
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"math/rand"
 	"net/http"
@@ -21,16 +23,31 @@ import (
 	"golang.org/x/net/websocket"
 )
 
+func getFileSystem(useOS bool, embededFiles embed.FS) http.FileSystem {
+	if useOS {
+		log.Print("~~ using live mode for static files")
+		return http.FS(os.DirFS("crew-go-ui/dist/spa"))
+	}
+
+	log.Print("~~ using embed mode for static files")
+	fsys, err := fs.Sub(embededFiles, "crew-go-ui/dist/spa")
+	if err != nil {
+		panic(err)
+	}
+
+	return http.FS(fsys)
+}
+
 // ServeRestApi starts the REST API server.
 // wg: A waitgroup that the server can use to signal when it is done.
 // taskGroupController: The root task group controller to use to manage all tasks and task groups.
 // taskClient: The client to use to execute tasks.
 // authMiddleware: The echo middleware function that will be used to authenticate API calls.
 // loginFunc: The function that will be used to handle login requests.
-func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, taskClient TaskClient, authMiddleware echo.MiddlewareFunc, loginFunc func(c echo.Context) error) *http.Server {
+func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, taskClient TaskClient, embededFiles embed.FS, authMiddleware echo.MiddlewareFunc, loginFunc func(c echo.Context) error) *http.Server {
 	e := echo.New()
 	e.Use(middleware.CORS())
-	e.Static("/", "crew-go-ui/dist/spa")
+
 	e.GET("/healthz", func(c echo.Context) error {
 		return c.String(http.StatusOK, "Healthy!")
 	})
@@ -657,6 +674,17 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 		})
 	})
 
+	// Non-embed, serve UI
+	// e.Static("/", "crew-go-ui/dist/spa")
+
+	// https://echo.labstack.com/cookbook/embed-resources/
+	useOS := len(os.Args) > 1 && os.Args[1] == "live"
+	assetHandler := http.FileServer(getFileSystem(useOS, embededFiles))
+	e.GET("/*", echo.WrapHandler(assetHandler))
+
+	// For troublehsooting: http://localhost:8090/static/icons/favicon-128x128.png
+	// e.GET("/static/*", echo.WrapHandler(http.StripPrefix("/static/", assetHandler)))
+
 	inShutdown := false
 
 	// Watch for updates in the task group contoller and deliver them to listening websockets
@@ -771,6 +799,8 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 		}
 		log.Println("ServeRestApi Stopped")
 	}()
+
+	log.Println("Server started at " + host + ":" + port)
 
 	return srv
 }
