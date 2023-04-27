@@ -33,7 +33,7 @@ func TestCanExecute(t *testing.T) {
 		IsPaused:          false,
 		IsComplete:        false,
 	}
-	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage(), nil)
 	group := NewTaskGroup("G10", "Test", taskGroupController)
 
 	group.AddTask(&task, &TaskTestClient{})
@@ -64,7 +64,7 @@ func TestCannotExecuteIfTaskIsPaused(t *testing.T) {
 		ParentIds:           make([]string, 0),
 		Children:            make([]*Task, 0),
 	}
-	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage(), nil)
 	group := NewTaskGroup("G11", "Test", taskGroupController)
 
 	canExecute := task.CanExecute(group)
@@ -98,7 +98,7 @@ func TestCannotExecuteIfParentsIncomplete(t *testing.T) {
 		IsComplete:        false,
 		ParentIds:         []string{"T12P"},
 	}
-	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage(), nil)
 	group := NewTaskGroup("G12", "Test", taskGroupController)
 	group.PreloadTasks([]*Task{&parent, &task}, &TaskTestClient{})
 
@@ -122,7 +122,7 @@ func TestCanUpdateTask(t *testing.T) {
 		ParentIds:         []string{"T1"},
 	}
 
-	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage(), nil)
 	group := NewTaskGroup("G13", "Test", taskGroupController)
 	group.PreloadTasks([]*Task{&task}, &TaskTestClient{})
 	group.Operate()
@@ -169,7 +169,7 @@ func TestCanResetTask(t *testing.T) {
 		RunAfter:          originalRunAfter,
 	}
 
-	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage(), nil)
 	group := NewTaskGroup("G21", "Test", taskGroupController)
 	group.PreloadTasks([]*Task{&task}, &TaskTestClient{})
 	group.Operate()

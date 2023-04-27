@@ -13,7 +13,7 @@ type TaskStorage interface {
 	DeleteTask(group *TaskGroup, task *Task) (err error)
 	SaveTaskGroup(group *TaskGroup) (err error)
 	DeleteTaskGroup(group *TaskGroup) (err error)
-	Bootstrap(shouldOperate bool, client TaskClient) (taskGroupController *TaskGroupController, err error)
+	Bootstrap(shouldOperate bool, client TaskClient, throttler *Throttler) (taskGroupController *TaskGroupController, err error)
 }
 
 // Filesystem Storage (JSON)
@@ -105,8 +105,8 @@ func (storage *JsonFilesystemTaskStorage) DeleteTaskGroup(group *TaskGroup) (err
 }
 
 // Bootstrap loads all task groups and tasks from the filesystem.
-func (storage *JsonFilesystemTaskStorage) Bootstrap(shouldOperate bool, client TaskClient) (taskGroupController *TaskGroupController, err error) {
-	taskGroupController = NewTaskGroupController(storage)
+func (storage *JsonFilesystemTaskStorage) Bootstrap(shouldOperate bool, client TaskClient, throttler *Throttler) (taskGroupController *TaskGroupController, err error) {
+	taskGroupController = NewTaskGroupController(storage, throttler)
 
 	entries, readDirError := os.ReadDir(storage.BasePath + "/task_groups")
 	if readDirError != nil {
@@ -228,8 +228,8 @@ func (storage *MemoryTaskStorage) DeleteTaskGroup(group *TaskGroup) (err error) 
 }
 
 // Bootstrap creates an empty task group controller.
-func (storage *MemoryTaskStorage) Bootstrap(shouldOperate bool, client TaskClient) (taskGroupController *TaskGroupController, err error) {
-	controller := NewTaskGroupController(storage)
+func (storage *MemoryTaskStorage) Bootstrap(shouldOperate bool, client TaskClient, throttler *Throttler) (taskGroupController *TaskGroupController, err error) {
+	controller := NewTaskGroupController(storage, throttler)
 	return controller, nil
 }
 

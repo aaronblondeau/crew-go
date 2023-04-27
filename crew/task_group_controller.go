@@ -11,6 +11,24 @@ type TaskGroupUpdateEvent struct {
 	TaskGroup TaskGroup `json:"task_group"`
 }
 
+// A ThrottlePushQuery is a request to the throttler to see if there is enough bandwidth for a worker to run.
+type ThrottlePushQuery struct {
+	TaskId string
+	Worker string
+	Resp   chan bool
+}
+
+// ThrottlePopQuery is a request to the throttler to notify that a worker is done.
+type ThrottlePopQuery struct {
+	TaskId string
+	Worker string
+}
+
+type Throttler struct {
+	Push chan ThrottlePushQuery
+	Pop  chan ThrottlePopQuery
+}
+
 // A TaskGroupController combines a set of task groups with a storage mechanism and event notification channels.
 type TaskGroupController struct {
 	TaskGroups map[string]*TaskGroup
@@ -18,15 +36,17 @@ type TaskGroupController struct {
 	TaskUpdates      chan TaskUpdateEvent      `json:"-"`
 	TaskGroupUpdates chan TaskGroupUpdateEvent `json:"-"`
 	Storage          TaskStorage               `json:"-"`
+	Throttler        *Throttler                `json:"-"`
 }
 
 // NewTaskGroupController creates a new TaskGroupController.
-func NewTaskGroupController(storage TaskStorage) *TaskGroupController {
+func NewTaskGroupController(storage TaskStorage, throttler *Throttler) *TaskGroupController {
 	op := TaskGroupController{
 		TaskGroups:       make(map[string]*TaskGroup),
 		TaskUpdates:      make(chan TaskUpdateEvent, 8),
 		TaskGroupUpdates: make(chan TaskGroupUpdateEvent, 8),
 		Storage:          storage,
+		Throttler:        throttler,
 	}
 	return &op
 }

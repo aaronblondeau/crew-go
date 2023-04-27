@@ -26,7 +26,7 @@ func TestStoreTaskGroup(t *testing.T) {
 	cwd, _ := os.Getwd()
 	storage := NewJsonFilesystemTaskStorage(cwd + "/test_storage")
 
-	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage(), nil)
 	group := NewTaskGroup("GS1", "Test storage", taskGroupController)
 	group.Storage = storage
 
@@ -40,7 +40,7 @@ func TestStoreTaskGroupAndTask(t *testing.T) {
 	cwd, _ := os.Getwd()
 	storage := NewJsonFilesystemTaskStorage(cwd + "/test_storage")
 
-	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage(), nil)
 	group := NewTaskGroup("GS2", "Test storage", taskGroupController)
 	group.Storage = storage
 
@@ -80,7 +80,7 @@ func TestBootstrap(t *testing.T) {
 	storage := NewJsonFilesystemTaskStorage(cwd + "/test_storage/bootstrap_a")
 	client := StorageTestClient{}
 
-	taskGroupController, bootstrapError := storage.Bootstrap(false, client)
+	taskGroupController, bootstrapError := storage.Bootstrap(false, client, nil)
 	if bootstrapError != nil {
 		t.Fatal(`Got an unexpected error when loading bootstrap_a`, bootstrapError)
 	}
@@ -112,7 +112,7 @@ func TestDeleteTask(t *testing.T) {
 	cwd, _ := os.Getwd()
 	storage := NewJsonFilesystemTaskStorage(cwd + "/test_storage")
 
-	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage(), nil)
 	group := NewTaskGroup("GS3", "Test storage", taskGroupController)
 	group.Storage = storage
 
@@ -167,7 +167,7 @@ func TestDeleteTaskGroup(t *testing.T) {
 	cwd, _ := os.Getwd()
 	storage := NewJsonFilesystemTaskStorage(cwd + "/test_storage")
 
-	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage(), nil)
 	group := NewTaskGroup("GS4", "Test storage", taskGroupController)
 	group.Storage = storage
 

@@ -106,7 +106,7 @@ func TestTaskInvokesClientPost(t *testing.T) {
 		IsComplete: false,
 		ParentIds:  []string{},
 	}
-	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage(), nil)
 	group := NewTaskGroup("G1", "Test", taskGroupController)
 
 	if len(group.TaskOperators) != 0 {
@@ -117,7 +117,7 @@ func TestTaskInvokesClientPost(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		for event := range group.Controller.TaskUpdates {
-			fmt.Println("Got an update!", event.Event, event.Task.IsComplete)
+			// fmt.Println("Got an update!", event.Event, event.Task.IsComplete)
 			if event.Task.IsComplete {
 				wg.Done()
 				return
@@ -158,7 +158,7 @@ func TestCaptureError(t *testing.T) {
 		IsComplete: false,
 		ParentIds:  []string{},
 	}
-	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage(), nil)
 	group := NewTaskGroup("G2", "Test", taskGroupController)
 
 	if len(group.TaskOperators) != 0 {
@@ -169,7 +169,7 @@ func TestCaptureError(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		for event := range group.Controller.TaskUpdates {
-			fmt.Println("Got an update!", event.Event, event.Task.IsComplete)
+			// fmt.Println("Got an update!", event.Event, event.Task.IsComplete)
 			if len(event.Task.Errors) > 0 {
 				wg.Done()
 				return
@@ -212,7 +212,7 @@ func TestErrorOnceThenSucceed(t *testing.T) {
 		ParentIds:           []string{},
 		ErrorDelayInSeconds: 1.0,
 	}
-	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage(), nil)
 	group := NewTaskGroup("G3", "Test", taskGroupController)
 
 	if len(group.TaskOperators) != 0 {
@@ -223,7 +223,7 @@ func TestErrorOnceThenSucceed(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		for event := range group.Controller.TaskUpdates {
-			fmt.Println("Got an update!", event.Event, event.Task.IsComplete)
+			// fmt.Println("Got an update!", event.Event, event.Task.IsComplete)
 			if event.Task.IsComplete {
 				wg.Done()
 				return
@@ -279,7 +279,7 @@ func TestSingleChildOutput(t *testing.T) {
 		IsComplete: false,
 		ParentIds:  []string{},
 	}
-	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage(), nil)
 	group := NewTaskGroup("G4", "Test", taskGroupController)
 
 	if len(group.TaskOperators) != 0 {
@@ -292,7 +292,7 @@ func TestSingleChildOutput(t *testing.T) {
 	wgChild.Add(1)
 	go func() {
 		for event := range group.Controller.TaskUpdates {
-			fmt.Println("Got an update!", event.Event, event.Task.Id, event.Task.IsComplete)
+			// fmt.Println("Got an update!", event.Event, event.Task.Id, event.Task.IsComplete)
 			if event.Task.Id == parent.Id {
 				if event.Task.IsComplete {
 					wgParent.Done()
@@ -401,7 +401,7 @@ func TestMultipleChildOutput(t *testing.T) {
 		IsComplete: false,
 		ParentIds:  []string{"T5C2A", "T5C2B"},
 	}
-	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage(), nil)
 	group := NewTaskGroup("G5", "Test", taskGroupController)
 
 	if len(group.TaskOperators) != 0 {
@@ -415,7 +415,7 @@ func TestMultipleChildOutput(t *testing.T) {
 	childCompletionOrder := []string{}
 	go func() {
 		for event := range group.Controller.TaskUpdates {
-			fmt.Println("Got an update!", event.Event, event.Task.Id, event.Task.IsComplete)
+			// fmt.Println("Got an update!", event.Event, event.Task.Id, event.Task.IsComplete)
 			if event.Task.Id == parent.Id {
 				if event.Task.IsComplete {
 					wgParent.Done()
@@ -522,7 +522,7 @@ func TestBadChildrenOutput(t *testing.T) {
 		IsComplete: false,
 		ParentIds:  []string{"CX"},
 	}
-	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage(), nil)
 	group := NewTaskGroup("G6", "Test", taskGroupController)
 
 	if len(group.TaskOperators) != 0 {
@@ -534,7 +534,7 @@ func TestBadChildrenOutput(t *testing.T) {
 	go func() {
 		defer wgParent.Done()
 		for event := range group.Controller.TaskUpdates {
-			fmt.Println("Got an update!", event.Event, event.Task.Id, event.Task.IsComplete)
+			// fmt.Println("Got an update!", event.Event, event.Task.Id, event.Task.IsComplete)
 			if event.Task.Id == parent.Id {
 				if event.Task.IsComplete || len(event.Task.Errors) > 0 {
 					return
@@ -602,7 +602,7 @@ func TestWorkgroupDelayInSecondsOutput(t *testing.T) {
 		ParentIds:  []string{},
 		RunAfter:   time.Time{},
 	}
-	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage(), nil)
 	group := NewTaskGroup("G14", "Test", taskGroupController)
 	taskGroupController.AddGroup(group)
 
@@ -707,7 +707,7 @@ func TestChildrenDelayInSecondsSecondsOutput(t *testing.T) {
 		IsComplete: false,
 		ParentIds:  []string{},
 	}
-	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage())
+	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage(), nil)
 	group := NewTaskGroup("G15", "Test", taskGroupController)
 	taskGroupController.AddGroup(group)
 
@@ -726,7 +726,7 @@ func TestChildrenDelayInSecondsSecondsOutput(t *testing.T) {
 		childDone := false
 		parentDone := false
 		for event := range group.Controller.TaskUpdates {
-			fmt.Println("Got an update!", event.Event, event.Task.Id, event.Task.IsComplete)
+			// fmt.Println("Got an update!", event.Event, event.Task.Id, event.Task.IsComplete)
 			if event.Task.Id == parent.Id {
 				if !parentDone && event.Task.IsComplete {
 					wgParent.Done()

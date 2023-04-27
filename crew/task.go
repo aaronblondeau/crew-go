@@ -336,7 +336,27 @@ func (operator *TaskOperator) Execute() {
 			Task:  *operator.Task,
 		})
 
+		// Apply worker throttling if a throttler is defined
+		throttler := operator.TaskGroup.Controller.Throttler
+		if (throttler != nil) && (operator.Task.Worker != "") {
+			query := ThrottlePushQuery{
+				TaskId: operator.Task.Id,
+				Worker: operator.Task.Worker,
+				Resp:   make(chan bool)}
+			throttler.Push <- query
+			// Block until throttler says it is ok to send task request
+			<-query.Resp
+		}
+
 		workerResponse, err := operator.Client.Post(operator.Task, operator.TaskGroup)
+
+		if (throttler != nil) && (operator.Task.Worker != "") {
+			query := ThrottlePopQuery{
+				TaskId: operator.Task.Id,
+				Worker: operator.Task.Worker}
+			// Let throttler know that task attempt is complete
+			throttler.Pop <- query
+		}
 
 		// decrement attempts
 		operator.Task.RemainingAttempts--

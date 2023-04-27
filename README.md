@@ -142,6 +142,7 @@ Crew is designed to help manage rate limit errors via workgroups.  When a rate l
 
 #### Dev Todos
 
+TODO : workgroup throttling?
 TODO : reset a task with children (resets all ancestors?)
 TODO : verify that workgroup pause works across all task groups in the node (???)
 TODO : duplicate merge in all task groups in the node (and update readme above)
