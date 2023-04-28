@@ -1,10 +1,13 @@
 package crew
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // TaskStorage defines the methods required for implementing crew's task storage interface.
@@ -14,6 +17,183 @@ type TaskStorage interface {
 	SaveTaskGroup(group *TaskGroup) (err error)
 	DeleteTaskGroup(group *TaskGroup) (err error)
 	Bootstrap(shouldOperate bool, client TaskClient, throttler *Throttler) (taskGroupController *TaskGroupController, err error)
+}
+
+// Redis Storage
+
+// JsonFilesystemTaskStorage stores tasks in the filesystem as JSON files.
+type RedisTaskStorage struct {
+	Client *redis.Client
+}
+
+// TaskKey returns the key for a task.
+func (storage *RedisTaskStorage) TaskKey(group *TaskGroup, task *Task) string {
+	// IMPORTANT - tasks and groups should have differing root paths so that we can SCAN groups without getting tasks
+	return "go-crew/group-tasks/" + group.Id + "/tasks/" + task.Id
+}
+
+// TaskGroupKey returns the key for a task group.
+func (storage *RedisTaskStorage) TaskGroupKey(group *TaskGroup) string {
+	// IMPORTANT - tasks and groups should have differing root paths so that we can SCAN groups without getting tasks
+	return "go-crew/groups/" + group.Id
+}
+
+// TaskGroupTasksPrefix returns the SCAN prefix to use to search for all tasks within a group.
+func (storage *RedisTaskStorage) TaskGroupTasksPrefix(group *TaskGroup) string {
+	return "go-crew/group-tasks/" + group.Id + "/*"
+}
+
+// TaskGroupsPrefix returns the SCAN prefix to use to search for all groups.
+func (storage *RedisTaskStorage) TaskGroupsPrefix() string {
+	return "go-crew/groups/*"
+}
+
+// SaveTask saves a task to redis.
+func (storage *RedisTaskStorage) SaveTask(group *TaskGroup, task *Task) (err error) {
+	if task.IsDeleting {
+		// Avoid re-creating a task that is getting deleted
+		return nil
+	}
+	taskJson, jsonErr := json.Marshal(task)
+	if jsonErr != nil {
+		return jsonErr
+	}
+	taskJsonStr := string(taskJson)
+
+	ctx := context.Background()
+	key := storage.TaskKey(group, task)
+	redisErr := storage.Client.Set(ctx, key, taskJsonStr, 0).Err()
+	return redisErr
+}
+
+// DeleteTask deletes a task from redis.
+func (storage *RedisTaskStorage) DeleteTask(group *TaskGroup, task *Task) (err error) {
+	key := storage.TaskKey(group, task)
+	ctx := context.Background()
+	redisErr := storage.Client.Del(ctx, key).Err()
+	return redisErr
+}
+
+// SaveTaskGroup saves a task group to redis.
+func (storage *RedisTaskStorage) SaveTaskGroup(group *TaskGroup) (err error) {
+	if group.IsDeleting {
+		// Avoid re-creating a group that is getting deleted
+		return nil
+	}
+
+	groupJson, jsonErr := json.Marshal(group)
+	if jsonErr != nil {
+		return jsonErr
+	}
+	groupJsonStr := string(groupJson)
+
+	ctx := context.Background()
+	key := storage.TaskGroupKey(group)
+	redisErr := storage.Client.Set(ctx, key, groupJsonStr, 0).Err()
+	return redisErr
+}
+
+// DeleteTaskGroup deletes a task group from redis.
+func (storage *RedisTaskStorage) DeleteTaskGroup(group *TaskGroup) (err error) {
+	key := storage.TaskGroupKey(group)
+	ctx := context.Background()
+	// Delete the group
+	redisErr := storage.Client.Del(ctx, key).Err()
+	if redisErr != nil {
+		return redisErr
+	}
+
+	// Delete all tasks in the group
+	iter := storage.Client.Scan(ctx, 0, storage.TaskGroupTasksPrefix(group), 0).Iterator()
+	for iter.Next(ctx) {
+		taskKey := iter.Val()
+		fmt.Println("~~ Deleting task group child task", taskKey)
+		redisErr = storage.Client.Del(ctx, taskKey).Err()
+		if redisErr != nil {
+			return redisErr
+		}
+	}
+	return nil
+}
+
+// Bootstrap loads all task groups and tasks from the filesystem.
+func (storage *RedisTaskStorage) Bootstrap(shouldOperate bool, client TaskClient, throttler *Throttler) (taskGroupController *TaskGroupController, err error) {
+	taskGroupController = NewTaskGroupController(storage, throttler)
+
+	ctx := context.Background()
+	iter := storage.Client.Scan(ctx, 0, storage.TaskGroupsPrefix(), 0).Iterator()
+
+	for iter.Next(ctx) {
+		// Load each group
+		groupKey := iter.Val()
+		fmt.Println("~~ Loading group", groupKey)
+
+		groupData, readGroupErr := storage.Client.Get(ctx, groupKey).Bytes()
+		if readGroupErr != nil {
+			fmt.Println("~~ Skipping group - failed to read group key", readGroupErr)
+			continue
+		}
+
+		group := NewTaskGroup("", "", taskGroupController)
+		groupParseError := json.Unmarshal(groupData, &group)
+		if groupParseError != nil {
+			fmt.Println("~~ Skipping group - failed to parse group value", groupParseError)
+			continue
+		}
+		// Make sure group uses this storage
+		group.Storage = storage
+
+		// Load each group's tasks
+		taskGroupTasks := make([]*Task, 0)
+		tasksIter := storage.Client.Scan(ctx, 0, storage.TaskGroupTasksPrefix(group), 0).Iterator()
+		for tasksIter.Next(ctx) {
+			taskKey := tasksIter.Val()
+			fmt.Println("~~ Loading task", groupKey)
+
+			taskData, readTaskErr := storage.Client.Get(ctx, taskKey).Bytes()
+			if readTaskErr != nil {
+				fmt.Println("~~ Skipping task - failed to read task key", readTaskErr)
+				continue
+			}
+
+			task := Task{
+				// Errors:    make([]interface{}, 0),
+				// ParentIds: make([]string, 0),
+				// Children:  make([]*Task, 0),
+			}
+			taskParseError := json.Unmarshal(taskData, &task)
+
+			// Make sure group id matches the group being loaded
+			task.TaskGroupId = group.Id
+			if taskParseError != nil {
+				fmt.Println("~~ Skipping task - failed to parse task value", taskKey, taskParseError)
+				continue
+			}
+
+			taskGroupTasks = append(taskGroupTasks, &task)
+		}
+
+		taskGroupController.AddGroup(group)
+		group.PreloadTasks(taskGroupTasks, client)
+	}
+
+	if shouldOperate {
+		taskGroupController.Operate()
+	}
+	return
+}
+
+// NewRedisTaskStorage creates a new RedisTaskStorage.
+func NewRedisTaskStorage(Addr string, Password string, DB int) *RedisTaskStorage {
+	client := redis.NewClient(&redis.Options{
+		Addr:     Addr,
+		Password: Password,
+		DB:       DB,
+	})
+	storage := RedisTaskStorage{
+		Client: client,
+	}
+	return &storage
 }
 
 // Filesystem Storage (JSON)

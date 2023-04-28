@@ -35,7 +35,28 @@ func main() {
 	storage := crew.NewJsonFilesystemTaskStorage(cwd + "/main_demo")
 	client := crew.NewHttpPostClient()
 
-	taskGroupsOperator, bootstrapError := storage.Bootstrap(true, client)
+	throttlePush := make(chan crew.ThrottlePushQuery, 8)
+	throttlePop := make(chan crew.ThrottlePopQuery, 8)
+	throttler := crew.Throttler{
+		Push: throttlePush,
+		Pop:  throttlePop,
+	}
+
+	// No-throttling
+	go func() {
+		for {
+			select {
+			case pushQuery := <-throttlePush:
+				Default behavior = immediate response => no throttling
+				fmt.Println("~~ Would throttle", pushQuery.Worker, pushQuery.TaskId)
+				pushQuery.Resp <- true
+			case popQuery := <-throttlePop:
+				fmt.Println("~~ Would unthrottle", popQuery.Worker, popQuery.TaskId)
+			}
+		}
+	}()
+
+	taskGroupsOperator, bootstrapError := storage.Bootstrap(true, client, throttler)
 	if bootstrapError != nil {
 		panic(bootstrapError)
 	}
