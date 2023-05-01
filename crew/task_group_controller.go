@@ -2,6 +2,7 @@ package crew
 
 import (
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -72,6 +73,12 @@ func (controller *TaskGroupController) DelayWorkgroup(workgroup string, delayInS
 
 // AddGroup adds a new group to the controller.
 func (controller *TaskGroupController) AddGroup(group *TaskGroup) error {
+	// Make sure group id doesn't contain filesystem path characters
+	// Prevents filesystem traversal attacks
+	if strings.ContainsAny(group.Id, "/.\\") {
+		return errors.New("group id contains invalid characters")
+	}
+
 	// Make sure group uses same storage as controller
 	group.Storage = controller.Storage
 

@@ -2,6 +2,7 @@ package crew
 
 import (
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -83,6 +84,12 @@ func (taskGroup *TaskGroup) PreloadTasks(tasks []*Task, client TaskClient) {
 // This method updates parent and child relationships within the group.
 // Use this after calling Operate on a task group.
 func (taskGroup *TaskGroup) AddTask(task *Task, client TaskClient) error {
+	// Make sure group id doesn't contain filesystem path characters
+	// Prevents filesystem traversal attacks
+	if strings.ContainsAny(task.Id, "/.\\") {
+		return errors.New("task id contains invalid characters")
+	}
+
 	task.TaskGroupId = taskGroup.Id
 
 	// Make sure task doesn't already exist
