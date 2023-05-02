@@ -271,6 +271,9 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 		if task.RemainingAttempts == 0 {
 			task.RemainingAttempts = 5
 		}
+		if task.ErrorDelayInSeconds == 0 {
+			task.ErrorDelayInSeconds = 30
+		}
 		task.CreatedAt = time.Now()
 		task.TaskGroupId = group.Id
 

@@ -90,6 +90,10 @@ func (taskGroup *TaskGroup) AddTask(task *Task, client TaskClient) error {
 		return errors.New("task id contains invalid characters")
 	}
 
+	if task.Worker == "" {
+		return errors.New("task worker is required")
+	}
+
 	task.TaskGroupId = taskGroup.Id
 
 	// Make sure task doesn't already exist

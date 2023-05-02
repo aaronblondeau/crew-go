@@ -534,6 +534,10 @@ func (task *Task) CanExecute(taskGroup *TaskGroup) bool {
 		return false
 	}
 
+	if task.Worker == "" {
+		return false
+	}
+
 	// Task should not execute if any of its parents are incomplete
 	for _, parentId := range task.ParentIds {
 		parent := taskGroup.TaskOperators[parentId].Task

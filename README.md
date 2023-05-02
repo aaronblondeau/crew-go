@@ -140,11 +140,114 @@ If childrenDelayInSeconds is included in response, all children will be delayed 
 
 Crew is designed to help manage rate limit errors via workgroups.  When a rate limit error is encountered all the tasks within a workgroup can be delayed by a specific amount of time by including "workgroupDelayInSeconds" in the response.  Since workgroups will often be organized around a specific API key it is recommended that you use an md5 hash of the API key instead of the key itself when creating workgroup names.
 
+### About Throttling
+
+If you need to restrict how many tasks are concurrently executing for a specific worker you can implement a throttler.  See main.go.example for a simple example.  Below is an example that restricts the total numnber of tasks on a per-worker basis.
+
+Throttler is a simple interface that requires two channels, Push and Pop. Whenever crew is ready to execute a task it sends a message on Push that contains a Resp channel. When your throttler is ready to allow the task to execute, send a true on Resp. As tasks complete (or error) crew will send a message to Pop to notify your throttler that the task is no longer pending.
+
+
+```go
+// Max X concurrent task per worker
+defaultMaxConcurrentTasks := 1
+maxConcurrentTasksByWorker := map[string]int{
+	"worker-a": 3,
+	"worker-b": 2,
+	"worker-c": 1,
+}
+go func() {
+	executingTasks := make(map[string][]crew.ThrottlePushQuery)
+	pendingTasks := make(map[string][]crew.ThrottlePushQuery)
+	for {
+		select {
+		case pushQuery := <-throttlePush:
+			// Get count of tasks currently executing for this worker
+			executingTasksCount := len(executingTasks[pushQuery.Worker])
+
+			maxConcurrentTasks := defaultMaxConcurrentTasks
+			if val, exists := maxConcurrentTasksByWorker[pushQuery.Worker]; exists {
+				maxConcurrentTasks = val
+			}
+
+			if executingTasksCount < maxConcurrentTasks {
+				// Push this query on the executing queue
+				queue, exists := executingTasks[pushQuery.Worker]
+				if !exists {
+					// Create queue if it doesn't exist
+					queue = make([]crew.ThrottlePushQuery, 0)
+				}
+				queue = append(queue, pushQuery)
+				executingTasks[pushQuery.Worker] = queue
+
+				// Send message to immediately run this
+				pushQuery.Resp <- true
+			} else {
+				// Push this query on the pending queue
+				queue, exists := pendingTasks[pushQuery.Worker]
+				if !exists {
+					// Create queue if it doesn't exist
+					queue = make([]crew.ThrottlePushQuery, 0)
+				}
+				queue = append(queue, pushQuery)
+				pendingTasks[pushQuery.Worker] = queue
+			}
+
+		case popQuery := <-throttlePop:
+			// Remove this task from the executing queue
+			queue := make([]crew.ThrottlePushQuery, 0)
+			for _, task := range executingTasks[popQuery.Worker] {
+				if task.TaskId != popQuery.TaskId {
+					queue = append(queue, task)
+				}
+			}
+
+			// If there are pending tasks, move the first one to the executing queue
+			pendingQueue, pendingExists := pendingTasks[popQuery.Worker]
+			if pendingExists && len(pendingQueue) > 0 {
+				// Remove from pending queue
+				pendingQuery := pendingQueue[0]
+				pendingQueue = pendingQueue[1:]
+				pendingTasks[popQuery.Worker] = pendingQueue
+
+				// Add to executing queue
+				queue = append(queue, pendingQuery)
+
+				// Send message to execute task
+				pendingQuery.Resp <- true
+			}
+
+			// Store updates to executing
+			executingTasks[popQuery.Worker] = queue
+		}
+	}
+}()
+
+taskGroupsOperator, bootstrapError := storage.Bootstrap(true, client, &throttler)
+```
+
+### About Persistence
+
+Crew provides two storage mechanisms out of the box: local filesystem or redis.  You can also implement the very simple TaskStorage interface to use your own storage mechanism.
+
+To use redis
+
+```go
+storage := crew.NewRedisTaskStorage("localhost:6379", "", 0)
+defer storage.Client.Close()
+//...
+taskGroupsOperator, bootstrapError := storage.Bootstrap(true, client, &throttler)
+```
+
+To use filesystem (local JSON files)
+
+```go
+storage := crew.NewJsonFilesystemTaskStorage("./storage")
+//...
+taskGroupsOperator, bootstrapError := storage.Bootstrap(true, client, &throttler)
+```
+
 #### Dev Todos
 
-TODO : workgroup throttling?
-TODO : reset a task with children (resets all ancestors?)
+TODO : When a task with children is reset, should all ancestors also be reset?
 TODO : verify that workgroup pause works across all task groups in the node (???)
-TODO : duplicate merge in all task groups in the node (and update readme above)
-TODO : redis (KeyDB) persistence : (https://docs.keydb.dev/) https://redis.com/blog/go-redis-official-redis-client/ 
-TODO : Implement an (configurably optional) cleanup "cron" for removing old taskgroups
+TODO : Make sure duplicate merge (via key) works across all task groups in the node (and update readme above)
