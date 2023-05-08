@@ -156,6 +156,8 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 
 		// create an all tasks slice
 		tasks := make([]*Task, 0)
+		group.OperatorsMutex.RLock()
+		defer group.OperatorsMutex.RUnlock()
 		for _, operator := range group.TaskOperators {
 			if search != "" {
 				if strings.Contains(strings.ToLower(operator.Task.Name), strings.ToLower(search)) {
@@ -205,9 +207,10 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
 		}
 
+		group.OperatorsMutex.RLock()
+		defer group.OperatorsMutex.RUnlock()
 		total := len(group.TaskOperators)
 		completed := 0
-
 		// Iterate all tasks
 		for _, operator := range group.TaskOperators {
 			if operator.Task.IsComplete {
@@ -230,6 +233,8 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
 		}
 		taskId := c.Param("task_id")
+		group.OperatorsMutex.RLock()
+		defer group.OperatorsMutex.RUnlock()
 		operator, taskFound := group.TaskOperators[taskId]
 		if !taskFound {
 			return c.String(http.StatusNotFound, fmt.Sprintf("Task with id %v not found in group %v.", taskId, taskGroupId))
@@ -277,14 +282,21 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 		task.CreatedAt = time.Now()
 		task.TaskGroupId = group.Id
 
+		group.OperatorsMutex.RLock()
+		shouldUnlock := true
 		// If parent ids are present validate that all parents exist
 		if len(task.ParentIds) > 0 {
 			for _, parentId := range task.ParentIds {
 				_, found = group.TaskOperators[parentId]
 				if !found {
+					group.OperatorsMutex.RUnlock()
+					shouldUnlock = false
 					return c.String(http.StatusBadRequest, fmt.Sprintf("Parent %s does not exist", parentId))
 				}
 			}
+		}
+		if shouldUnlock {
+			group.OperatorsMutex.RUnlock()
 		}
 
 		err := group.AddTask(&task, taskClient)
@@ -412,7 +424,9 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 		}
 
 		taskId := c.Param("task_id")
+		group.OperatorsMutex.RLock()
 		operator, taskFound := group.TaskOperators[taskId]
+		group.OperatorsMutex.RUnlock()
 		if !taskFound {
 			return c.String(http.StatusNotFound, fmt.Sprintf("Task with id %v not found in group %v.", taskId, taskGroupId))
 		}
@@ -447,7 +461,9 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 		}
 
 		taskId := c.Param("task_id")
+		group.OperatorsMutex.RLock()
 		operator, taskFound := group.TaskOperators[taskId]
+		group.OperatorsMutex.RUnlock()
 		if !taskFound {
 			return c.String(http.StatusNotFound, fmt.Sprintf("Task with id %v not found in group %v.", taskId, taskGroupId))
 		}
@@ -503,7 +519,9 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
 		}
 		taskId := c.Param("task_id")
+		group.OperatorsMutex.RLock()
 		operator, taskFound := group.TaskOperators[taskId]
+		group.OperatorsMutex.RUnlock()
 		if !taskFound {
 			return c.String(http.StatusNotFound, fmt.Sprintf("Task with id %v not found in group %v.", taskId, taskGroupId))
 		}
@@ -542,7 +560,9 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 						parentId, ok := parentIdCandidate.(string)
 						if ok {
 							// Make sure parent id exists (and isn't self)
+							group.OperatorsMutex.RLock()
 							_, parentFound := group.TaskOperators[parentId]
+							group.OperatorsMutex.RUnlock()
 							if !parentFound {
 								return c.String(http.StatusBadRequest, fmt.Sprintf("Parent %s does not exist", parentId))
 							}

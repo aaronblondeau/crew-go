@@ -56,6 +56,7 @@ func NewTaskGroupController(storage TaskStorage, throttler *Throttler) *TaskGrou
 func (controller *TaskGroupController) DelayWorkgroup(workgroup string, delayInSeconds int) {
 	// send update to all tasks in all groups that match workgroup
 	for _, group := range controller.TaskGroups {
+		group.OperatorsMutex.RLock()
 		for _, task := range group.TaskOperators {
 			if task.Task.Workgroup == workgroup && !task.Task.IsComplete {
 				// Update runAfter for task
@@ -68,6 +69,7 @@ func (controller *TaskGroupController) DelayWorkgroup(workgroup string, delayInS
 				}
 			}
 		}
+		group.OperatorsMutex.RUnlock()
 	}
 }
 
@@ -108,6 +110,7 @@ func (controller *TaskGroupController) RemoveGroup(group_id string) error {
 	group.IsDeleting = true
 
 	// Stop all operators
+	group.OperatorsMutex.RLock()
 	for _, operator := range group.TaskOperators {
 		operator.Task.IsDeleting = true
 
@@ -118,6 +121,7 @@ func (controller *TaskGroupController) RemoveGroup(group_id string) error {
 			// Ignore no shutdown listener...
 		}
 	}
+	group.OperatorsMutex.RUnlock()
 
 	// Remove the group
 	fileDeleteErr := group.Storage.DeleteTaskGroup(group)

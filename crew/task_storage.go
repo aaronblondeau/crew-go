@@ -190,6 +190,11 @@ func NewRedisTaskStorage(Addr string, Password string, DB int) *RedisTaskStorage
 		Password: Password,
 		DB:       DB,
 	})
+	pingCmd := client.Ping(context.Background())
+	pingErr := pingCmd.Err()
+	if pingErr != nil {
+		panic(pingErr)
+	}
 	storage := RedisTaskStorage{
 		Client: client,
 	}

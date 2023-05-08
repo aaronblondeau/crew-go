@@ -447,24 +447,32 @@ func (operator *TaskOperator) Execute() {
 				operator.Task.IsComplete = true
 				// Complete all other tasks with matching key
 				if operator.Task.Key != "" {
+					operator.TaskGroup.OperatorsMutex.RLock()
+					// Collec siblings in lock, process later
+					keySiblingOperators := make([]*TaskOperator, 0)
 					for _, keySiblingOperator := range operator.TaskGroup.TaskOperators {
 						if (keySiblingOperator.Task.Key == operator.Task.Key) && (keySiblingOperator.Task.Id != operator.Task.Id) {
-							keySiblingOperator.Task.IsComplete = true
-							keySiblingOperator.Task.Output = workerResponse.Output
+							keySiblingOperators = append(keySiblingOperators, keySiblingOperator)
+						}
+					}
+					operator.TaskGroup.OperatorsMutex.RUnlock()
 
-							// persist keySiblingOperator.Task
-							keySiblingOperator.TaskGroup.Storage.SaveTask(keySiblingOperator.TaskGroup, keySiblingOperator.Task)
+					for _, keySiblingOperator := range keySiblingOperators {
+						keySiblingOperator.Task.IsComplete = true
+						keySiblingOperator.Task.Output = workerResponse.Output
 
-							// emit update event
-							operator.TaskGroup.Controller.ProcessTaskUpdate(TaskUpdateEvent{
-								Event: "update",
-								Task:  *keySiblingOperator.Task,
-							})
+						// persist keySiblingOperator.Task
+						keySiblingOperator.TaskGroup.Storage.SaveTask(keySiblingOperator.TaskGroup, keySiblingOperator.Task)
 
-							// Let children know parent is complete
-							for _, child := range keySiblingOperator.Task.Children {
-								operator.TaskGroup.TaskOperators[child.Id].ParentCompleteEvents <- keySiblingOperator.Task
-							}
+						// emit update event
+						operator.TaskGroup.Controller.ProcessTaskUpdate(TaskUpdateEvent{
+							Event: "update",
+							Task:  *keySiblingOperator.Task,
+						})
+
+						// Let children know parent is complete
+						for _, child := range keySiblingOperator.Task.Children {
+							operator.TaskGroup.TaskOperators[child.Id].ParentCompleteEvents <- keySiblingOperator.Task
 						}
 					}
 				}
@@ -483,7 +491,9 @@ func (operator *TaskOperator) Execute() {
 			// Note, this is done here as well in addition to child.RunAfter= above because some tasks may have children that were pre-populated
 			for _, child := range operator.Task.Children {
 				if !child.IsComplete {
+					operator.TaskGroup.OperatorsMutex.RLock()
 					childOp, found := operator.TaskGroup.TaskOperators[child.Id]
+					operator.TaskGroup.OperatorsMutex.RUnlock()
 					if found {
 						// Update runAfter for child
 						childOp.ExternalUpdates <- TaskUpdate{
@@ -516,7 +526,11 @@ func (operator *TaskOperator) Execute() {
 		// When a task is completed, find all children and send their operator an ParentCompleteEvents
 		if operator.Task.IsComplete {
 			for _, child := range operator.Task.Children {
-				operator.TaskGroup.TaskOperators[child.Id].ParentCompleteEvents <- operator.Task
+				operator.TaskGroup.OperatorsMutex.RLock()
+				// Grab channel in lock, send outside of lock
+				pce := operator.TaskGroup.TaskOperators[child.Id].ParentCompleteEvents
+				operator.TaskGroup.OperatorsMutex.RUnlock()
+				pce <- operator.Task
 			}
 		}
 	}
@@ -540,7 +554,9 @@ func (task *Task) CanExecute(taskGroup *TaskGroup) bool {
 
 	// Task should not execute if any of its parents are incomplete
 	for _, parentId := range task.ParentIds {
+		taskGroup.OperatorsMutex.RLock()
 		parent := taskGroup.TaskOperators[parentId].Task
+		taskGroup.OperatorsMutex.RUnlock()
 		if !parent.IsComplete {
 			return false
 		}

@@ -3,6 +3,7 @@ package crew
 import (
 	"errors"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -25,24 +26,26 @@ type WorkgroupDelayEvent struct {
 
 // TaskGroup represents a collection of all the tasks required to complete a body of work.
 type TaskGroup struct {
-	Id            string                   `json:"id"`
-	Name          string                   `json:"name"`
-	CreatedAt     time.Time                `json:"createdAt"`
-	TaskOperators map[string]*TaskOperator `json:"-"` // `json:"tasks"`
-	Storage       TaskStorage              `json:"-"`
-	Controller    *TaskGroupController     `json:"-"`
-	IsDeleting    bool                     `json:"-"`
+	Id             string                   `json:"id"`
+	Name           string                   `json:"name"`
+	CreatedAt      time.Time                `json:"createdAt"`
+	TaskOperators  map[string]*TaskOperator `json:"-"` // `json:"tasks"`
+	OperatorsMutex *sync.RWMutex            `json:"-"`
+	Storage        TaskStorage              `json:"-"`
+	Controller     *TaskGroupController     `json:"-"`
+	IsDeleting     bool                     `json:"-"`
 }
 
 // NewTaskGroup creates a new TaskGroup.
 func NewTaskGroup(id string, name string, controller *TaskGroupController) *TaskGroup {
 	tg := TaskGroup{
-		Id:            id,
-		Name:          name,
-		CreatedAt:     time.Now(),
-		TaskOperators: make(map[string]*TaskOperator),
-		Storage:       NewMemoryTaskStorage(),
-		Controller:    controller,
+		Id:             id,
+		Name:           name,
+		CreatedAt:      time.Now(),
+		TaskOperators:  make(map[string]*TaskOperator),
+		OperatorsMutex: &sync.RWMutex{},
+		Storage:        NewMemoryTaskStorage(),
+		Controller:     controller,
 	}
 	return &tg
 }
@@ -56,6 +59,7 @@ func (taskGroup *TaskGroup) PreloadTasks(tasks []*Task, client TaskClient) {
 	childrenIndex := make(map[string][]*Task)
 
 	// Create an operator for each task in the group
+	taskGroup.OperatorsMutex.Lock()
 	for _, task := range tasks {
 		operator := NewTaskOperator(task, taskGroup)
 		operator.Client = client
@@ -70,6 +74,7 @@ func (taskGroup *TaskGroup) PreloadTasks(tasks []*Task, client TaskClient) {
 			childrenIndex[parentId] = append(childrenIndex[parentId], task)
 		}
 	}
+	taskGroup.OperatorsMutex.Unlock()
 
 	// Make a second pass to inflate Task.Children from Task.ParentIds
 	for _, task := range tasks {
@@ -80,7 +85,7 @@ func (taskGroup *TaskGroup) PreloadTasks(tasks []*Task, client TaskClient) {
 	}
 }
 
-// AddTask adds the given task to the group, wrapping each it an operator, and calling operate.
+// AddTask adds the given task to the group, wrapping each in an operator, and calling operate.
 // This method updates parent and child relationships within the group.
 // Use this after calling Operate on a task group.
 func (taskGroup *TaskGroup) AddTask(task *Task, client TaskClient) error {
@@ -97,18 +102,32 @@ func (taskGroup *TaskGroup) AddTask(task *Task, client TaskClient) error {
 	task.TaskGroupId = taskGroup.Id
 
 	// Make sure task doesn't already exist
+	shouldUnlock1 := true
+	taskGroup.OperatorsMutex.RLock()
 	for _, op := range taskGroup.TaskOperators {
 		if op.Task.Id == task.Id {
+			taskGroup.OperatorsMutex.RUnlock()
+			shouldUnlock1 = false
 			return errors.New("task with same id already exists in group")
 		}
 	}
+	if shouldUnlock1 {
+		taskGroup.OperatorsMutex.RUnlock()
+	}
 
 	// Make sure parents exist
+	shouldUnlock2 := true
+	taskGroup.OperatorsMutex.RLock()
 	for _, parentId := range task.ParentIds {
 		_, found := taskGroup.TaskOperators[parentId]
 		if !found {
+			taskGroup.OperatorsMutex.RUnlock()
+			shouldUnlock2 = false
 			return errors.New("cannot find all parents for task")
 		}
+	}
+	if shouldUnlock2 {
+		taskGroup.OperatorsMutex.RUnlock()
 	}
 
 	// Create operator
@@ -116,11 +135,15 @@ func (taskGroup *TaskGroup) AddTask(task *Task, client TaskClient) error {
 	operator.Client = client
 
 	// Add to group
+	taskGroup.OperatorsMutex.Lock()
 	taskGroup.TaskOperators[task.Id] = operator
+	taskGroup.OperatorsMutex.Unlock()
 
 	// Update parents' children
 	for _, parentId := range task.ParentIds {
+		taskGroup.OperatorsMutex.RLock()
 		parentOperator, found := taskGroup.TaskOperators[parentId]
+		taskGroup.OperatorsMutex.RUnlock()
 		if found {
 			parentOperator.Task.Children = append(parentOperator.Task.Children, task)
 		}
@@ -145,7 +168,9 @@ func (taskGroup *TaskGroup) AddTask(task *Task, client TaskClient) error {
 // This method updates parent and child relationships within the group.
 func (taskGroup *TaskGroup) DeleteTask(id string) error {
 	// Find the task
+	taskGroup.OperatorsMutex.RLock()
 	operator, found := taskGroup.TaskOperators[id]
+	taskGroup.OperatorsMutex.RUnlock()
 	if !found {
 		return errors.New("cannot find task")
 	}
@@ -167,7 +192,9 @@ func (taskGroup *TaskGroup) DeleteTask(id string) error {
 	// If task has parents, remove from parents' Children array
 	if len(operator.Task.ParentIds) > 0 {
 		for _, parentId := range operator.Task.ParentIds {
+			taskGroup.OperatorsMutex.RLock()
 			parentOperator, parentOperatorFound := taskGroup.TaskOperators[parentId]
+			taskGroup.OperatorsMutex.RUnlock()
 			if parentOperatorFound {
 				newChildren := make([]*Task, 0)
 				// Rebuild children array without removed task
@@ -188,7 +215,9 @@ func (taskGroup *TaskGroup) DeleteTask(id string) error {
 	})
 
 	// Remove from the group
+	taskGroup.OperatorsMutex.Lock()
 	delete(taskGroup.TaskOperators, operator.Task.Id)
+	taskGroup.OperatorsMutex.Unlock()
 
 	// persist the change
 	fileDeleteErr := taskGroup.Storage.DeleteTask(operator.TaskGroup, operator.Task)
@@ -198,13 +227,19 @@ func (taskGroup *TaskGroup) DeleteTask(id string) error {
 
 // Operate begins the lifecycle of every task in the group
 func (taskGroup *TaskGroup) Operate() {
+	taskGroup.OperatorsMutex.RLock()
+	defer taskGroup.OperatorsMutex.RUnlock()
+
 	for _, operator := range taskGroup.TaskOperators {
 		operator.Operate()
 	}
 }
 
-// Operate terminates the lifecycle of every task in the group
+// Shutdown terminates the lifecycle of every task in the group
 func (taskGroup *TaskGroup) Shutdown() {
+	taskGroup.OperatorsMutex.RLock()
+	defer taskGroup.OperatorsMutex.RUnlock()
+
 	for _, operator := range taskGroup.TaskOperators {
 		operator.Shutdown <- true
 	}
@@ -216,36 +251,56 @@ func (taskGroup *TaskGroup) Reset(remainingAttempts int, updateComplete chan err
 	// If there are no seed tasks, then reset all tasks
 
 	hasSeedTasks := false
+	taskGroup.OperatorsMutex.RLock()
 	for _, operator := range taskGroup.TaskOperators {
 		if operator.Task.IsSeed {
 			hasSeedTasks = true
 			break
 		}
 	}
+	taskGroup.OperatorsMutex.RUnlock()
 
 	if hasSeedTasks {
 		// Remove all non-seed tasks
 		deletedTasks := 1
 		for deletedTasks > 0 {
 			deletedTasks = 0
+
+			idsToDelete := make([]string, 0)
+
+			taskGroup.OperatorsMutex.RLock()
 			for _, operator := range taskGroup.TaskOperators {
 				if !operator.Task.IsSeed && len(operator.Task.Children) == 0 {
-					taskGroup.DeleteTask(operator.Task.Id)
-					deletedTasks++
+					idsToDelete = append(idsToDelete, operator.Task.Id)
 				}
+			}
+			taskGroup.OperatorsMutex.RUnlock()
+
+			for _, idToDelete := range idsToDelete {
+				taskGroup.DeleteTask(idToDelete)
+				deletedTasks++
 			}
 		}
 	}
 
 	// Reset remaining tasks
 	hasCleanupError := false
+
+	taskGroup.OperatorsMutex.RLock()
+	operatorsToReset := make([]*TaskOperator, 0)
 	for _, operator := range taskGroup.TaskOperators {
+		operatorsToReset = append(operatorsToReset, operator)
+	}
+	taskGroup.OperatorsMutex.RUnlock()
+
+	for _, operator := range operatorsToReset {
 		operator.ResetTask(remainingAttempts, updateComplete)
 
 		if hasSeedTasks && !operator.Task.IsSeed {
 			hasCleanupError = true
 		}
 	}
+
 	if hasCleanupError {
 		return errors.New("unable to reset task hierarchy - found non-seed tasks after clean cycle")
 	}
@@ -254,7 +309,14 @@ func (taskGroup *TaskGroup) Reset(remainingAttempts int, updateComplete chan err
 
 // UpdateAllTasks updates all tasks in the group with the given update.
 func (taskGroup *TaskGroup) UpdateAllTasks(update map[string]interface{}) error {
+	taskGroup.OperatorsMutex.RLock()
+	ops := make([]*TaskOperator, 0)
 	for _, op := range taskGroup.TaskOperators {
+		ops = append(ops, op)
+	}
+	taskGroup.OperatorsMutex.RUnlock()
+
+	for _, op := range ops {
 		updateComplete := make(chan error)
 		op.ExternalUpdates <- TaskUpdate{
 			Update:         update,
@@ -266,12 +328,20 @@ func (taskGroup *TaskGroup) UpdateAllTasks(update map[string]interface{}) error 
 			return err
 		}
 	}
+
 	return nil
 }
 
 // RetryAllTasks retries all tasks in the group with the given remaining attempts.
 func (taskGroup *TaskGroup) RetryAllTasks(remainingAttempts int) error {
+	taskGroup.OperatorsMutex.RLock()
+	ops := make([]*TaskOperator, 0)
 	for _, op := range taskGroup.TaskOperators {
+		ops = append(ops, op)
+	}
+	taskGroup.OperatorsMutex.RUnlock()
+
+	for _, op := range ops {
 		if !op.Task.IsComplete {
 			updateComplete := make(chan error)
 			op.ExternalUpdates <- TaskUpdate{
@@ -285,6 +355,7 @@ func (taskGroup *TaskGroup) RetryAllTasks(remainingAttempts int) error {
 			}
 		}
 	}
+
 	return nil
 }
 
