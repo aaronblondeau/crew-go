@@ -47,16 +47,16 @@ func main() {
 		for {
 			select {
 			case pushQuery := <-throttlePush:
-				Default behavior = immediate response => no throttling
-				fmt.Println("~~ Would throttle", pushQuery.Worker, pushQuery.TaskId)
+				// Default behavior = immediate response => no throttling
+				fmt.Println("~~ Would throttle", pushQuery.Worker, pushQuery.TaskAddress)
 				pushQuery.Resp <- true
 			case popQuery := <-throttlePop:
-				fmt.Println("~~ Would unthrottle", popQuery.Worker, popQuery.TaskId)
+				fmt.Println("~~ Would unthrottle", popQuery.Worker, popQuery.TaskAddress)
 			}
 		}
 	}()
 
-	taskGroupsOperator, bootstrapError := storage.Bootstrap(true, client, throttler)
+	pool, bootstrapError := storage.Bootstrap(true, client, &throttler)
 	if bootstrapError != nil {
 		panic(bootstrapError)
 	}
@@ -125,14 +125,14 @@ func main() {
 		}
 	}
 
-	srv := crew.ServeRestApi(httpServerExitDone, taskGroupsOperator, client, embededFiles, authMiddleware, loginFunc)
+	srv := crew.ServeRestApi(httpServerExitDone, pool, client, embededFiles, authMiddleware, loginFunc)
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-done
 		log.Print("Process Terminating...")
-		close(taskGroupsOperator.TaskUpdates)
-		close(taskGroupsOperator.TaskGroupUpdates)
+		close(pool.TaskUpdates)
+		close(pool.TaskGroupUpdates)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := srv.Shutdown(ctx); err != nil {

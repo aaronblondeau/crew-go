@@ -27,8 +27,7 @@ func TestSuccessResponse(t *testing.T) {
 	}
 
 	task := Task{
-		Id:                "T16",
-		TaskGroupId:       "G16",
+		Address:           "G16-T16",
 		Name:              "Http Task",
 		Worker:            "test",
 		Workgroup:         "",
@@ -36,7 +35,7 @@ func TestSuccessResponse(t *testing.T) {
 		RemainingAttempts: 5,
 		IsPaused:          false,
 		IsComplete:        false,
-		ParentIds:         []string{},
+		ParentAddresses:   []string{},
 	}
 
 	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage(), nil)
@@ -83,8 +82,8 @@ func TestHttpErrorResponse(t *testing.T) {
 	}
 
 	task := Task{
-		Id:                "T17",
-		TaskGroupId:       "G17",
+		Address:           "T17",
+		TaskGroupAddress:  "G17",
 		Name:              "Http Task",
 		Worker:            "test",
 		Workgroup:         "",
@@ -92,7 +91,7 @@ func TestHttpErrorResponse(t *testing.T) {
 		RemainingAttempts: 5,
 		IsPaused:          false,
 		IsComplete:        false,
-		ParentIds:         []string{},
+		ParentAddresses:   []string{},
 	}
 
 	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage(), nil)
@@ -124,8 +123,8 @@ func TestErrorResponse(t *testing.T) {
 	}
 
 	task := Task{
-		Id:                "T18",
-		TaskGroupId:       "G18",
+		Address:           "T18",
+		TaskGroupAddress:  "G18",
 		Name:              "Http Task",
 		Worker:            "test",
 		Workgroup:         "",
@@ -133,7 +132,7 @@ func TestErrorResponse(t *testing.T) {
 		RemainingAttempts: 5,
 		IsPaused:          false,
 		IsComplete:        false,
-		ParentIds:         []string{},
+		ParentAddresses:   []string{},
 	}
 
 	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage(), nil)
@@ -202,8 +201,8 @@ func TestParentDataInPayload(t *testing.T) {
 	}
 
 	task := Task{
-		Id:                "T19P",
-		TaskGroupId:       "G19",
+		Address:           "T19P",
+		TaskGroupAddress:  "G19",
 		Name:              "Http Task",
 		Worker:            "test",
 		Workgroup:         "",
@@ -211,14 +210,14 @@ func TestParentDataInPayload(t *testing.T) {
 		RemainingAttempts: 4,
 		IsPaused:          false,
 		IsComplete:        true,
-		ParentIds:         []string{},
+		ParentAddresses:   []string{},
 		Input:             map[string]int{"in": 42},
 		Output:            map[string]int{"foo": 1, "bar": 2},
 	}
 
 	child := Task{
-		Id:                "T19C",
-		TaskGroupId:       "G19",
+		Address:           "T19C",
+		TaskGroupAddress:  "G19",
 		Name:              "A Child Task",
 		Worker:            "test",
 		Workgroup:         "",
@@ -226,7 +225,7 @@ func TestParentDataInPayload(t *testing.T) {
 		RemainingAttempts: 5,
 		IsPaused:          false,
 		IsComplete:        false,
-		ParentIds:         []string{"T19P"},
+		ParentAddresses:   []string{"T19P"},
 	}
 
 	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage(), nil)
@@ -259,8 +258,8 @@ func TestChildrenResponse(t *testing.T) {
 	}
 
 	task := Task{
-		Id:                "T20",
-		TaskGroupId:       "G20",
+		Address:           "T20",
+		TaskGroupAddress:  "G20",
 		Name:              "Http Task",
 		Worker:            "test",
 		Workgroup:         "",
@@ -268,7 +267,7 @@ func TestChildrenResponse(t *testing.T) {
 		RemainingAttempts: 5,
 		IsPaused:          false,
 		IsComplete:        false,
-		ParentIds:         []string{},
+		ParentAddresses:   []string{},
 	}
 
 	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage(), nil)

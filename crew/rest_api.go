@@ -44,7 +44,7 @@ func getFileSystem(useOS bool, embededFiles embed.FS) http.FileSystem {
 // taskClient: The client to use to execute tasks.
 // authMiddleware: The echo middleware function that will be used to authenticate API calls.
 // loginFunc: The function that will be used to handle login requests.
-func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, taskClient TaskClient, embededFiles embed.FS, authMiddleware echo.MiddlewareFunc, loginFunc func(c echo.Context) error) *http.Server {
+func ServeRestApi(wg *sync.WaitGroup, pool *TaskPool, taskClient TaskClient, embededFiles embed.FS, authMiddleware echo.MiddlewareFunc, loginFunc func(c echo.Context) error) *http.Server {
 	e := echo.New()
 	e.Use(middleware.CORS())
 
@@ -281,6 +281,8 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 		}
 		task.CreatedAt = time.Now()
 		task.TaskGroupId = group.Id
+
+		// TODO RFTODO: validate child/parent structure
 
 		group.OperatorsMutex.RLock()
 		shouldUnlock := true

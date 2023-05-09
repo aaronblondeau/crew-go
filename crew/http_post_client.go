@@ -38,45 +38,44 @@ func NewHttpPostClient() *HttpPostClient {
 
 // WorkerPayload defines the input sent to a worker (post body).
 type WorkerPayload struct {
-	Input   interface{}                 `json:"input"`
-	Worker  interface{}                 `json:"worker"`
-	Parents []WorkerPayloadParentResult `json:"parents"`
-	TaskId  string                      `json:"taskId"`
+	Input       interface{}                 `json:"input"`
+	Worker      interface{}                 `json:"worker"`
+	Parents     []WorkerPayloadParentResult `json:"parents"`
+	TaskAddress string                      `json:"taskAddress"`
 }
 
 // WorkerPayloadParentResult defines the schema for output from a worker.
 type WorkerPayloadParentResult struct {
-	TaskId string      `json:"taskId"`
-	Worker string      `json:"worker"`
-	Input  interface{} `json:"input"`
-	Output interface{} `json:"output"`
+	TaskAddress string      `json:"taskAddress"`
+	Worker      string      `json:"worker"`
+	Input       interface{} `json:"input"`
+	Output      interface{} `json:"output"`
 }
 
 // Post delivers a task to a worker.
-func (client *HttpPostClient) Post(task *Task, taskGroup *TaskGroup) (response WorkerResponse, err error) {
+func (client *HttpPostClient) Post(task *Task) (response WorkerResponse, err error) {
 	// Start preparing the task input by gathering info from parents
 	payloadParents := []WorkerPayloadParentResult{}
 
 	// Get each parent and add result
-	for _, parentId := range task.ParentIds {
+	for _, parent := range task.Parents {
 		// error, output, children
-		parentOp, found := taskGroup.TaskOperators[parentId]
-		if found {
-			parentResult := WorkerPayloadParentResult{
-				TaskId: parentOp.Task.Id,
-				Worker: parentOp.Task.Worker,
-				Input:  parentOp.Task.Input,
-				Output: parentOp.Task.Output,
-			}
-			payloadParents = append(payloadParents, parentResult)
+
+		parentResult := WorkerPayloadParentResult{
+			TaskAddress: parent.Address,
+			Worker:      parent.Worker,
+			Input:       parent.Input,
+			Output:      parent.Output,
 		}
+		payloadParents = append(payloadParents, parentResult)
+
 	}
 
 	payload := WorkerPayload{
-		Input:   task.Input,
-		Parents: payloadParents,
-		Worker:  task.Worker,
-		TaskId:  task.Id,
+		Input:       task.Input,
+		Parents:     payloadParents,
+		Worker:      task.Worker,
+		TaskAddress: task.Address,
 	}
 
 	payloadJsonStr, _ := json.Marshal(payload)

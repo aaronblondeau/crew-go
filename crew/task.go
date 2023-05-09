@@ -16,34 +16,31 @@ type WorkerResponse struct {
 
 // TaskClient defines the interface for delivering tasks to workers.
 type TaskClient interface {
-	Post(task *Task, taskGroup *TaskGroup) (response WorkerResponse, err error)
+	Post(task *Task) (response WorkerResponse, err error)
 }
 
 // A Task represents a unit of work that can be completed by a worker.
 type Task struct {
-	Id                  string      `json:"id"`
-	TaskGroupId         string      `json:"taskGroupId"`
-	Name                string      `json:"name"`
-	Worker              string      `json:"worker"`
-	Workgroup           string      `json:"workgroup"`
-	Key                 string      `json:"key"`
-	RemainingAttempts   int         `json:"remainingAttempts"`
-	IsPaused            bool        `json:"isPaused"`
-	IsComplete          bool        `json:"isComplete"`
-	RunAfter            time.Time   `json:"runAfter"`
-	IsSeed              bool        `json:"isSeed"`
-	ErrorDelayInSeconds int         `json:"errorDelayInSeconds"`
-	Input               interface{} `json:"input"`
-	Output              interface{} `json:"output"`
-	Errors              []string    `json:"errors"`
-	CreatedAt           time.Time   `json:"createdAt"`
-	ParentIds           []string    `json:"parentIds"`
-	BusyExecuting       bool        `json:"busyExecuting"`
-	Children            []*Task     `json:"-"`
-	IsDeleting          bool        `json:"-"`
-	// parentsComplete
-	// assignedTo
-	// assignedAt
+	Address             string        `json:"address"`
+	Name                string        `json:"name"`
+	Worker              string        `json:"worker"`
+	Workgroup           string        `json:"workgroup"`
+	Key                 string        `json:"key"`
+	RemainingAttempts   int           `json:"remainingAttempts"`
+	IsPaused            bool          `json:"isPaused"`
+	IsComplete          bool          `json:"isComplete"`
+	RunAfter            time.Time     `json:"runAfter"`
+	IsSeed              bool          `json:"isSeed"`
+	ErrorDelayInSeconds int           `json:"errorDelayInSeconds"`
+	Input               interface{}   `json:"input"`
+	Output              interface{}   `json:"output"`
+	Errors              []string      `json:"errors"`
+	CreatedAt           time.Time     `json:"createdAt"`
+	ParentAddresses     []string      `json:"parentAddresses"`
+	BusyExecuting       bool          `json:"busyExecuting"`
+	Operator            *TaskOperator `json:"-"`
+	Children            []*Task       `json:"-"`
+	Parents             []*Task       `json:"-"`
 }
 
 // TaskUpdate defines the data emitted whenever a task is updated.
@@ -52,10 +49,16 @@ type TaskUpdate struct {
 	UpdateComplete chan error
 }
 
+// WorkgroupDelayEvent defines the data emitted when a workgroup is delayed.
+type WorkgroupDelayEvent struct {
+	Workgroup         string `json:"workgroup"`
+	DelayInSeconds    int    `json:"delayInSeconds"`
+	OriginTaskGroupId string `json:"originTaskGroupId"`
+}
+
 // A TaskOperator manages the lifecycle and state of a Task.
 type TaskOperator struct {
 	Task                 *Task
-	TaskGroup            *TaskGroup
 	ExternalUpdates      chan TaskUpdate
 	ExecuteTimer         *time.Timer
 	EvaluateTimer        *time.Timer
@@ -64,11 +67,20 @@ type TaskOperator struct {
 	Operating            bool
 	Executing            chan bool
 	Terminated           chan bool
+	Delete               chan bool
+	Create               chan bool
 	Client               TaskClient
+	Storage              TaskStorage
+	Throttler            *Throttler
+	TaskUpdates          chan TaskUpdateEvent
+	TaskChildren         chan *Task
+	DelayWorkgroup       chan WorkgroupDelay
+	TaskCompletions      chan *Task
+	IsDeleting           bool
 }
 
 // NewTaskOperator creates a new TaskOperator.
-func NewTaskOperator(task *Task, taskGroup *TaskGroup) *TaskOperator {
+func NewTaskOperator(task *Task, client TaskClient, storage TaskStorage, throttler *Throttler, taskUpdates chan TaskUpdateEvent, taskChildren chan *Task, delayWorkgroup chan WorkgroupDelay, taskCompletions chan *Task) *TaskOperator {
 	execTimer := time.NewTimer(1000 * time.Second)
 	execTimer.Stop()
 	evalTimer := time.NewTimer(1000 * time.Second)
@@ -76,15 +88,27 @@ func NewTaskOperator(task *Task, taskGroup *TaskGroup) *TaskOperator {
 
 	t := TaskOperator{
 		Task:                 task,
-		TaskGroup:            taskGroup,
 		ExternalUpdates:      make(chan TaskUpdate, 8),
 		ExecuteTimer:         execTimer,
 		EvaluateTimer:        evalTimer,
 		Shutdown:             make(chan bool),
-		ParentCompleteEvents: make(chan *Task, len(task.Children)),
+		ParentCompleteEvents: make(chan *Task, 8), // len(task.Children)
 		Executing:            make(chan bool),
 		Terminated:           make(chan bool),
+		Delete:               make(chan bool),
+		Create:               make(chan bool),
+		Client:               client,
+		Storage:              storage,
+		Throttler:            throttler,
+		TaskUpdates:          taskUpdates,
+		TaskChildren:         taskChildren,
+		DelayWorkgroup:       delayWorkgroup,
+		TaskCompletions:      taskCompletions,
+		IsDeleting:           false,
 	}
+
+	task.Operator = &t
+
 	// Don't let initial timer run
 	t.CancelExecute()
 	return &t
@@ -108,6 +132,17 @@ func (operator *TaskOperator) Operate() {
 			select {
 			case <-operator.ExecuteTimer.C:
 				operator.Execute()
+
+			case <-operator.Delete:
+				operator.IsDeleting = true
+				// TODO RFTODO
+				// Send delete to all children
+				// Shutdown operator
+				// Remove from storage
+
+			case <-operator.Create:
+				// TODO RFTODO
+				// Save task
 
 			case <-operator.EvaluateTimer.C:
 				operator.Evaluate()
@@ -198,7 +233,7 @@ func (operator *TaskOperator) Operate() {
 				}
 
 				// persist the change
-				saveError := operator.TaskGroup.Storage.SaveTask(operator.TaskGroup, operator.Task)
+				saveError := operator.Storage.SaveTask(operator.Task)
 
 				// Let anyone waiting on the update (rest api) know that the update has been persisted
 				if update.UpdateComplete != nil {
@@ -210,7 +245,7 @@ func (operator *TaskOperator) Operate() {
 				}
 
 				// emit update event
-				operator.TaskGroup.Controller.ProcessTaskUpdate(TaskUpdateEvent{
+				operator.ProcessTaskUpdate(TaskUpdateEvent{
 					Event: "update",
 					Task:  *operator.Task,
 				})
@@ -223,7 +258,7 @@ func (operator *TaskOperator) Operate() {
 			case isShuttingDown := <-operator.Shutdown:
 				if isShuttingDown {
 					// Save immediately once we get a shutdown request
-					operator.TaskGroup.Storage.SaveTask(operator.TaskGroup, operator.Task)
+					operator.Storage.SaveTask(operator.Task)
 
 					// if operator.Task.BusyExecuting = true, wait up to 60 seconds till false
 					if operator.Task.BusyExecuting {
@@ -235,7 +270,7 @@ func (operator *TaskOperator) Operate() {
 					}
 
 					// Save again after any pending execution id complete
-					operator.TaskGroup.Storage.SaveTask(operator.TaskGroup, operator.Task)
+					operator.Storage.SaveTask(operator.Task)
 
 					operator.CancelExecute()
 					operator.Terminated <- true
@@ -245,6 +280,13 @@ func (operator *TaskOperator) Operate() {
 		}
 	}()
 	operator.Evaluate()
+}
+
+func (operator *TaskOperator) ProcessTaskUpdate(update TaskUpdateEvent) {
+	select {
+	case operator.TaskUpdates <- update:
+	default:
+	}
 }
 
 // Evaluate determines if a Task is eligible to be executed and begins
@@ -258,7 +300,7 @@ func (operator *TaskOperator) Evaluate() {
 	// - One of task's parents have completed
 
 	// Check if task is ready to execute:
-	taskCanExecute := operator.Task.CanExecute(operator.TaskGroup)
+	taskCanExecute := operator.Task.CanExecute()
 
 	// If task is good to go, create an execution timer (if one doesn't exist already)
 	if taskCanExecute {
@@ -321,7 +363,7 @@ func (operator *TaskOperator) ResetTask(remainingAttempts int, updateComplete ch
 // Execute sends a task to a worker and then processes the response or error.
 func (operator *TaskOperator) Execute() {
 	// This func does the work of making http call, processing result or error
-	if (*operator.Task).CanExecute(operator.TaskGroup) {
+	if (*operator.Task).CanExecute() {
 
 		operator.Task.BusyExecuting = true
 
@@ -331,29 +373,29 @@ func (operator *TaskOperator) Execute() {
 		}
 
 		// emit update event
-		operator.TaskGroup.Controller.ProcessTaskUpdate(TaskUpdateEvent{
+		operator.ProcessTaskUpdate(TaskUpdateEvent{
 			Event: "update",
 			Task:  *operator.Task,
 		})
 
 		// Apply worker throttling if a throttler is defined
-		throttler := operator.TaskGroup.Controller.Throttler
+		throttler := operator.Throttler
 		if (throttler != nil) && (operator.Task.Worker != "") {
 			query := ThrottlePushQuery{
-				TaskId: operator.Task.Id,
-				Worker: operator.Task.Worker,
-				Resp:   make(chan bool)}
+				TaskAddress: operator.Task.Address,
+				Worker:      operator.Task.Worker,
+				Resp:        make(chan bool)}
 			throttler.Push <- query
 			// Block until throttler says it is ok to send task request
 			<-query.Resp
 		}
 
-		workerResponse, err := operator.Client.Post(operator.Task, operator.TaskGroup)
+		workerResponse, err := operator.Client.Post(operator.Task)
 
 		if (throttler != nil) && (operator.Task.Worker != "") {
 			query := ThrottlePopQuery{
-				TaskId: operator.Task.Id,
-				Worker: operator.Task.Worker}
+				TaskAddress: operator.Task.Address,
+				Worker:      operator.Task.Worker}
 			// Let throttler know that task attempt is complete
 			throttler.Pop <- query
 		}
@@ -389,131 +431,55 @@ func (operator *TaskOperator) Execute() {
 				operator.EvaluateTimer.Reset(errorDelay)
 			}
 		} else {
-			childrenOk := true
 			// Create child tasks
 			if len(workerResponse.Children) > 0 {
-				// Children have to be created in order so that parents exist before children exist
-				// TaskGroup's AddTask throws an error if a task's parents aren't found
-				// We can use that here by iteratively trying to create children till they're all done
-				// If we get stuck then something is wrong with structure of children and we should record an error
-				createdChildren := 0
-				lastCreatedChildren := 0
-				expectedChildren := len(workerResponse.Children)
-				for createdChildren < expectedChildren {
-					for _, child := range workerResponse.Children {
-						// If worker didn't specify at least one parent for the child, add current task as a parent
-						if len(child.ParentIds) == 0 {
-							child.ParentIds = append(child.ParentIds, operator.Task.Id)
-						}
-						if workerResponse.ChildrenDelayInSeconds > 0 {
-							child.RunAfter = time.Now().Add(time.Duration(workerResponse.ChildrenDelayInSeconds * int(time.Second)))
-						}
-						if workerResponse.WorkgroupDelayInSeconds > 0 && operator.Task.Workgroup != "" && child.Workgroup == operator.Task.Workgroup {
-							child.RunAfter = time.Now().Add(time.Duration(workerResponse.WorkgroupDelayInSeconds * int(time.Second)))
-						}
-						child.CreatedAt = time.Now()
-
-						if child.RemainingAttempts == 0 {
-							child.RemainingAttempts = 5
-						}
-						if child.ErrorDelayInSeconds == 0 {
-							child.ErrorDelayInSeconds = 30
-						}
-
-						// Add task will error if child exists or parents are missing
-						// Add task also emits TaskUpdates for us
-						err := operator.TaskGroup.AddTask(child, operator.Client)
-						if err == nil {
-							createdChildren++
-						}
+				for _, child := range workerResponse.Children {
+					// If worker didn't specify at least one parent for the child, add current task as a parent
+					if len(child.ParentAddresses) == 0 {
+						child.ParentAddresses = append(child.ParentAddresses, operator.Task.Address)
 					}
-					// If number of createdChildren didn't change on a pass (and we're not done) then we have a corrupt parent/child structure in children
-					if createdChildren != lastCreatedChildren {
-						if createdChildren < len(workerResponse.Children) {
-							// Something went wrong creating the children
-							// Un-create children from above so we don't leave a half baked structure
-							for _, child := range workerResponse.Children {
-								operator.TaskGroup.DeleteTask(child.Id)
-							}
-							childrenOk = false
-						}
-						break
+					if workerResponse.ChildrenDelayInSeconds > 0 {
+						child.RunAfter = time.Now().Add(time.Duration(workerResponse.ChildrenDelayInSeconds * int(time.Second)))
 					}
-					lastCreatedChildren = createdChildren
+					if workerResponse.WorkgroupDelayInSeconds > 0 && operator.Task.Workgroup != "" && child.Workgroup == operator.Task.Workgroup {
+						child.RunAfter = time.Now().Add(time.Duration(workerResponse.WorkgroupDelayInSeconds * int(time.Second)))
+					}
+					child.CreatedAt = time.Now()
+
+					if child.RemainingAttempts == 0 {
+						child.RemainingAttempts = 5
+					}
+					if child.ErrorDelayInSeconds == 0 {
+						child.ErrorDelayInSeconds = 30
+					}
+
+					if workerResponse.ChildrenDelayInSeconds > 0 {
+						child.RunAfter = time.Now().Add(time.Duration(workerResponse.ChildrenDelayInSeconds * int(time.Second)))
+					}
+
+					// This will block until the child is fully setup
+					operator.TaskChildren <- child
 				}
 			}
 
-			if childrenOk {
-				operator.Task.IsComplete = true
-				// Complete all other tasks with matching key
-				if operator.Task.Key != "" {
-					operator.TaskGroup.OperatorsMutex.RLock()
-					// Collec siblings in lock, process later
-					keySiblingOperators := make([]*TaskOperator, 0)
-					for _, keySiblingOperator := range operator.TaskGroup.TaskOperators {
-						if (keySiblingOperator.Task.Key == operator.Task.Key) && (keySiblingOperator.Task.Id != operator.Task.Id) {
-							keySiblingOperators = append(keySiblingOperators, keySiblingOperator)
-						}
-					}
-					operator.TaskGroup.OperatorsMutex.RUnlock()
-
-					for _, keySiblingOperator := range keySiblingOperators {
-						keySiblingOperator.Task.IsComplete = true
-						keySiblingOperator.Task.Output = workerResponse.Output
-
-						// persist keySiblingOperator.Task
-						keySiblingOperator.TaskGroup.Storage.SaveTask(keySiblingOperator.TaskGroup, keySiblingOperator.Task)
-
-						// emit update event
-						operator.TaskGroup.Controller.ProcessTaskUpdate(TaskUpdateEvent{
-							Event: "update",
-							Task:  *keySiblingOperator.Task,
-						})
-
-						// Let children know parent is complete
-						for _, child := range keySiblingOperator.Task.Children {
-							operator.TaskGroup.TaskOperators[child.Id].ParentCompleteEvents <- keySiblingOperator.Task
-						}
-					}
-				}
-			} else {
-				// Children not ok
-				operator.Task.IsComplete = false
-				operator.Task.Errors = append(operator.Task.Errors, "Unable to create children - corrupt parent/child relationship.")
-			}
+			// Set is complete AFTER creating child tasks
+			operator.Task.IsComplete = true
 		}
 
 		if workerResponse.WorkgroupDelayInSeconds > 0 && operator.Task.Workgroup != "" {
-			operator.TaskGroup.Controller.DelayWorkgroup(operator.Task.Workgroup, workerResponse.WorkgroupDelayInSeconds)
-		}
-
-		if workerResponse.ChildrenDelayInSeconds > 0 {
-			// Note, this is done here as well in addition to child.RunAfter= above because some tasks may have children that were pre-populated
-			for _, child := range operator.Task.Children {
-				if !child.IsComplete {
-					operator.TaskGroup.OperatorsMutex.RLock()
-					childOp, found := operator.TaskGroup.TaskOperators[child.Id]
-					operator.TaskGroup.OperatorsMutex.RUnlock()
-					if found {
-						// Update runAfter for child
-						childOp.ExternalUpdates <- TaskUpdate{
-							Update: map[string]interface{}{
-								"runAfter": time.Now().Add(time.Duration(workerResponse.ChildrenDelayInSeconds * int(time.Second))),
-							},
-							UpdateComplete: nil,
-						}
-					}
-				}
+			operator.DelayWorkgroup <- WorkgroupDelay{
+				Workgroup:      operator.Task.Workgroup,
+				DelayInSeconds: workerResponse.WorkgroupDelayInSeconds,
 			}
 		}
 
 		operator.Task.BusyExecuting = false
 
 		// persist the task
-		operator.TaskGroup.Storage.SaveTask(operator.TaskGroup, operator.Task)
+		operator.Storage.SaveTask(operator.Task)
 
 		// emit update event
-		operator.TaskGroup.Controller.ProcessTaskUpdate(TaskUpdateEvent{
+		operator.ProcessTaskUpdate(TaskUpdateEvent{
 			Event: "update",
 			Task:  *operator.Task,
 		})
@@ -523,28 +489,27 @@ func (operator *TaskOperator) Execute() {
 		default:
 		}
 
-		// When a task is completed, find all children and send their operator an ParentCompleteEvents
 		if operator.Task.IsComplete {
+			// Let pool know that a task completed
+			operator.TaskCompletions <- operator.Task
+
+			// When a task is completed, find all children and send their operator an ParentCompleteEvents
 			for _, child := range operator.Task.Children {
-				operator.TaskGroup.OperatorsMutex.RLock()
-				// Grab channel in lock, send outside of lock
-				pce := operator.TaskGroup.TaskOperators[child.Id].ParentCompleteEvents
-				operator.TaskGroup.OperatorsMutex.RUnlock()
-				pce <- operator.Task
+				child.Operator.ParentCompleteEvents <- operator.Task
 			}
 		}
 	}
 }
 
 // CanExecute determines if a Task is in a state where it can be executed.
-func (task *Task) CanExecute(taskGroup *TaskGroup) bool {
+func (task *Task) CanExecute() bool {
 	// Task should not execute if
 	// - it is already complete
 	// - it is paused
 	// - it has no remaining attempts
 	// - its task group is paused
 	// Note that we do not check runAfter here, task timing is handled by operator
-	if task.IsDeleting || task.IsComplete || task.IsPaused || task.RemainingAttempts <= 0 {
+	if task.Operator.IsDeleting || task.IsComplete || task.IsPaused || task.RemainingAttempts <= 0 {
 		return false
 	}
 
@@ -553,11 +518,8 @@ func (task *Task) CanExecute(taskGroup *TaskGroup) bool {
 	}
 
 	// Task should not execute if any of its parents are incomplete
-	for _, parentId := range task.ParentIds {
-		taskGroup.OperatorsMutex.RLock()
-		parent := taskGroup.TaskOperators[parentId].Task
-		taskGroup.OperatorsMutex.RUnlock()
-		if !parent.IsComplete {
+	for _, child := range task.Children {
+		if !child.IsComplete {
 			return false
 		}
 	}
