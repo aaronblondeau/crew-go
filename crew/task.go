@@ -448,7 +448,7 @@ func (operator *TaskOperator) Execute() {
 				// Complete all other tasks with matching key
 				if operator.Task.Key != "" {
 					operator.TaskGroup.OperatorsMutex.RLock()
-					// Collec siblings in lock, process later
+					// Collect siblings in lock, process later
 					keySiblingOperators := make([]*TaskOperator, 0)
 					for _, keySiblingOperator := range operator.TaskGroup.TaskOperators {
 						if (keySiblingOperator.Task.Key == operator.Task.Key) && (keySiblingOperator.Task.Id != operator.Task.Id) {

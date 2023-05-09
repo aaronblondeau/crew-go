@@ -57,19 +57,24 @@ func (controller *TaskGroupController) DelayWorkgroup(workgroup string, delayInS
 	// send update to all tasks in all groups that match workgroup
 	for _, group := range controller.TaskGroups {
 		group.OperatorsMutex.RLock()
-		for _, task := range group.TaskOperators {
-			if task.Task.Workgroup == workgroup && !task.Task.IsComplete {
-				// Update runAfter for task
-				newRunAfter := time.Now().Add(time.Duration(delayInSeconds * int(time.Second)))
-				task.ExternalUpdates <- TaskUpdate{
-					Update: map[string]interface{}{
-						"runAfter": newRunAfter,
-					},
-					UpdateComplete: nil,
-				}
+		operatorsToUpdate := make([]*TaskOperator, 0)
+		for _, operator := range group.TaskOperators {
+			if operator.Task.Workgroup == workgroup && !operator.Task.IsComplete {
+				operatorsToUpdate = append(operatorsToUpdate, operator)
 			}
 		}
 		group.OperatorsMutex.RUnlock()
+
+		for _, op := range operatorsToUpdate {
+			// Update runAfter for task
+			newRunAfter := time.Now().Add(time.Duration(delayInSeconds * int(time.Second)))
+			op.ExternalUpdates <- TaskUpdate{
+				Update: map[string]interface{}{
+					"runAfter": newRunAfter,
+				},
+				UpdateComplete: nil,
+			}
+		}
 	}
 }
 
