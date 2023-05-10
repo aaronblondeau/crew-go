@@ -189,59 +189,40 @@ func ServeRestApi(wg *sync.WaitGroup, pool *TaskPool, taskClient TaskClient, emb
 		if group.Id == "" {
 			group.Id = uuid.New().String()
 		}
-		group_add_err := taskGroupController.AddGroup(group)
-		if group_add_err != nil {
-			return c.String(http.StatusBadRequest, group_add_err.Error())
+
+		msg := APICreateGroupRequest{
+			Group: group,
+			Resp:  make(chan APICreateGroupResponse),
 		}
-		return c.JSON(http.StatusOK, group)
+		pool.Inbox <- msg
+		resp := <-msg.Resp
+
+		if resp.Error != nil {
+			return c.String(resp.Error.Code, resp.Error.Message)
+		}
+
+		return c.JSON(http.StatusOK, resp.Group)
 	}, authMiddleware)
 	e.POST("/api/v1/task_group/:task_group_id/tasks", func(c echo.Context) error {
 		// Create a task
-		taskGroupId := c.Param("task_group_id")
-		group, found := taskGroupController.TaskGroups[taskGroupId]
-		if !found {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
-		}
-
-		task := Task{}
+		task := NewTask()
 		inflate_err := json.NewDecoder(c.Request().Body).Decode(&task)
 		if inflate_err != nil {
 			return c.String(http.StatusBadRequest, inflate_err.Error())
 		}
-		if task.Id == "" {
-			task.Id = uuid.New().String()
-		}
-		if task.RemainingAttempts == 0 {
-			task.RemainingAttempts = 5
-		}
-		if task.ErrorDelayInSeconds == 0 {
-			task.ErrorDelayInSeconds = 30
-		}
-		task.CreatedAt = time.Now()
-		task.TaskGroupId = group.Id
 
-		group.OperatorsMutex.RLock()
-		shouldUnlock := true
-		// If parent ids are present validate that all parents exist
-		if len(task.ParentIds) > 0 {
-			for _, parentId := range task.ParentIds {
-				_, found = group.TaskOperators[parentId]
-				if !found {
-					group.OperatorsMutex.RUnlock()
-					shouldUnlock = false
-					return c.String(http.StatusBadRequest, fmt.Sprintf("Parent %s does not exist", parentId))
-				}
-			}
+		msg := APICreateTaskRequest{
+			Task: task,
+			Resp: make(chan APICreateTaskResponse),
 		}
-		if shouldUnlock {
-			group.OperatorsMutex.RUnlock()
+		pool.Inbox <- msg
+		resp := <-msg.Resp
+
+		if resp.Error != nil {
+			return c.String(resp.Error.Code, resp.Error.Message)
 		}
 
-		err := group.AddTask(&task, taskClient)
-		if err != nil {
-			return c.String(http.StatusBadRequest, err.Error())
-		}
-		return c.JSON(http.StatusOK, task)
+		return c.JSON(http.StatusOK, msg.Task)
 	}, authMiddleware)
 	e.DELETE("/api/v1/task_group/:task_group_id", func(c echo.Context) error {
 		// Delete a task group

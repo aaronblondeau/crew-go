@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 // NOTE - task pool must perform throttling by monitoring ExecuteMessage and ExecutedMessage
@@ -97,6 +99,16 @@ type APICreateGroupResponse struct {
 	Error *APIError
 }
 
+type APICreateTaskRequest struct {
+	Resp chan APICreateTaskResponse
+	Task *Task
+}
+
+type APICreateTaskResponse struct {
+	Task  *Task
+	Error *APIError
+}
+
 type Throttler struct {
 	Push chan ThrottlePushQuery
 	Pop  chan ThrottlePopQuery
@@ -137,13 +149,7 @@ func (pool *TaskPool) Start() {
 
 	// Build initial indexes of tasks by group, key, workgroup
 	for _, task := range pool.Tasks {
-		pool.TasksByGroup[task.GroupId] = append(pool.TasksByGroup[task.GroupId], task)
-		if task.Key != "" {
-			pool.TasksByKey[task.Key] = append(pool.TasksByKey[task.Key], task)
-		}
-		if task.Workgroup != "" {
-			pool.TasksByWorkgroup[task.Workgroup] = append(pool.TasksByWorkgroup[task.Workgroup], task)
-		}
+		pool.AddTaskToIndexes(task)
 	}
 
 	// Process messages - that's all we do!
@@ -195,6 +201,8 @@ func (pool *TaskPool) Start() {
 				pool.GetTask(msg.(APIGetTaskRequest))
 			case APICreateGroupRequest:
 				pool.CreateGroup(msg.(APICreateGroupRequest))
+			case APICreateTaskRequest:
+				pool.CreateTask(msg.(APICreateTaskRequest))
 			default:
 				// TODO - error
 			}
@@ -227,6 +235,16 @@ func (pool *TaskPool) Stop(done chan bool) {
 
 	// Signal done
 	done <- true
+}
+
+func (pool *TaskPool) AddTaskToIndexes(task *Task) {
+	pool.TasksByGroup[task.GroupId] = append(pool.TasksByGroup[task.GroupId], task)
+	if task.Key != "" {
+		pool.TasksByKey[task.Key] = append(pool.TasksByKey[task.Key], task)
+	}
+	if task.Workgroup != "" {
+		pool.TasksByWorkgroup[task.Workgroup] = append(pool.TasksByWorkgroup[task.Workgroup], task)
+	}
 }
 
 func (pool *TaskPool) GetGroup(msg APIGetGroupRequest) {
@@ -422,5 +440,59 @@ func (pool *TaskPool) CreateGroup(msg APICreateGroupRequest) {
 	// Send response
 	msg.Resp <- APICreateGroupResponse{
 		Group: msg.Group,
+	}
+}
+
+func (pool *TaskPool) CreateTask(msg APICreateTaskRequest) {
+	// Ensure task has an id
+	if msg.Task.Id == "" {
+		msg.Task.Id = uuid.New().String()
+	}
+
+	// Make sure task does not exist already
+	_, found := pool.Tasks[msg.Task.Id]
+	if found {
+		msg.Resp <- APICreateTaskResponse{
+			Error: &APIError{
+				Code:    409,
+				Message: fmt.Sprintf("Task with id %v already exists.", msg.Task.Id),
+			},
+		}
+		return
+	}
+
+	// Make sure group exists
+	_, groupFound := pool.Groups[msg.Task.GroupId]
+	if !groupFound {
+		msg.Resp <- APICreateTaskResponse{
+			Error: &APIError{
+				Code:    404,
+				Message: fmt.Sprintf("Task group with id %v not found.", msg.Task.GroupId),
+			},
+		}
+		return
+	}
+
+	// Add task to pool
+	pool.Tasks[msg.Task.Id] = msg.Task
+
+	// Update indexes
+	pool.AddTaskToIndexes(msg.Task)
+
+	// Start task
+	msg.Task.Start(pool.Client, pool.Storage, pool.Inbox)
+
+	// Send response
+	msg.Resp <- APICreateTaskResponse{
+		Task: msg.Task,
+	}
+
+	// Send pending messages to task
+	pendingMessages, hasPendingMessages := pool.LostAndFound[msg.Task.Id]
+	if hasPendingMessages {
+		for _, pendingMessage := range pendingMessages {
+			msg.Task.Inbox <- pendingMessage
+		}
+		delete(pool.LostAndFound, msg.Task.Id)
 	}
 }
