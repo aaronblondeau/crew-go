@@ -11,9 +11,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
-	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -44,7 +42,7 @@ func getFileSystem(useOS bool, embededFiles embed.FS) http.FileSystem {
 // taskClient: The client to use to execute tasks.
 // authMiddleware: The echo middleware function that will be used to authenticate API calls.
 // loginFunc: The function that will be used to handle login requests.
-func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, taskClient TaskClient, embededFiles embed.FS, authMiddleware echo.MiddlewareFunc, loginFunc func(c echo.Context) error) *http.Server {
+func ServeRestApi(wg *sync.WaitGroup, pool *TaskPool, taskClient TaskClient, embededFiles embed.FS, authMiddleware echo.MiddlewareFunc, loginFunc func(c echo.Context) error) *http.Server {
 	e := echo.New()
 	e.Use(middleware.CORS())
 
@@ -63,11 +61,11 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 				page = qpage
 			}
 		}
-		page_size := 20
+		pageSize := 20
 		if c.QueryParams().Has("pageSize") {
-			qpage_size, err := strconv.Atoi(c.QueryParam("pageSize"))
+			qPageSize, err := strconv.Atoi(c.QueryParam("pageSize"))
 			if err == nil {
-				page_size = qpage_size
+				pageSize = qPageSize
 			}
 		}
 		search := ""
@@ -75,57 +73,37 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			search = c.QueryParam("search")
 		}
 
-		// create an all groups slice (while performing search)
-		groups := make([]*TaskGroup, 0)
-		for _, group := range taskGroupController.TaskGroups {
-			if search != "" {
-				if strings.Contains(strings.ToLower(group.Name), strings.ToLower(search)) {
-					groups = append(groups, group)
-				}
-			} else {
-				groups = append(groups, group)
-			}
+		msg := APIGetGroupsRequest{
+			Search:   search,
+			Page:     page,
+			PageSize: pageSize,
+			Resp:     make(chan APIGetGroupsResponse),
 		}
+		pool.Inbox <- msg
 
-		// sort all groups slice
-		sort.Slice(groups, func(a, b int) bool {
-			return groups[a].CreatedAt.Before(groups[b].CreatedAt)
-		})
-
-		if page_size == 0 {
-			page_size = len(groups)
+		resp := <-msg.Resp
+		if resp.Error != nil {
+			return c.String(resp.Error.Code, resp.Error.Message)
 		}
-
-		// pagninate groups slice
-		slice_start := (page - 1) * page_size
-		slice_end := slice_start + page_size
-		slice_count := len(groups)
-		if slice_start < 0 {
-			slice_start = 0
-		}
-		if slice_end < slice_start {
-			slice_end = slice_start
-		}
-		if slice_start > slice_count {
-			slice_start = slice_count
-		}
-		if slice_end > slice_count {
-			slice_end = slice_count
-		}
-		sliced := groups[slice_start:slice_end]
 
 		return c.JSON(http.StatusOK, map[string]interface{}{
-			"taskGroups": sliced,
-			"count":      slice_count,
+			"taskGroups": resp.Groups,
+			"count":      resp.Total,
 		})
 	}, authMiddleware)
 	e.GET("/api/v1/task_group/:id", func(c echo.Context) error {
 		taskGroupId := c.Param("id")
-		group, found := taskGroupController.TaskGroups[taskGroupId]
-		if !found {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
+		msg := APIGetGroupRequest{
+			Id:   taskGroupId,
+			Resp: make(chan APIGetGroupResponse),
 		}
-		return c.JSON(http.StatusOK, group)
+		pool.Inbox <- msg
+		resp := <-msg.Resp
+
+		if resp.Error != nil {
+			return c.String(resp.Error.Code, resp.Error.Message)
+		}
+		return c.JSON(http.StatusOK, resp.Group)
 	}, authMiddleware)
 	e.GET("/api/v1/task_group/:task_group_id/tasks", func(c echo.Context) error {
 		page := 1
@@ -135,111 +113,71 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 				page = qpage
 			}
 		}
-		page_size := 20
+		pageSize := 20
 		if c.QueryParams().Has("pageSize") {
-			qpage_size, err := strconv.Atoi(c.QueryParam("pageSize"))
+			qPageSize, err := strconv.Atoi(c.QueryParam("pageSize"))
 			if err == nil {
-				page_size = qpage_size
+				pageSize = qPageSize
 			}
 		}
 
 		taskGroupId := c.Param("task_group_id")
-		group, found := taskGroupController.TaskGroups[taskGroupId]
-		if !found {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
-		}
 
 		search := ""
 		if c.QueryParams().Has("search") {
 			search = c.QueryParam("search")
 		}
 
-		// create an all tasks slice
-		tasks := make([]*Task, 0)
-		group.OperatorsMutex.RLock()
-		defer group.OperatorsMutex.RUnlock()
-		for _, operator := range group.TaskOperators {
-			if search != "" {
-				if strings.Contains(strings.ToLower(operator.Task.Name), strings.ToLower(search)) {
-					tasks = append(tasks, operator.Task)
-				}
-			} else {
-				tasks = append(tasks, operator.Task)
-			}
+		msg := APIGetTasksRequest{
+			Search:   search,
+			Page:     page,
+			PageSize: pageSize,
+			GroupId:  taskGroupId,
+			Resp:     make(chan APIGetTasksResponse),
 		}
+		pool.Inbox <- msg
 
-		// sort all tasks slice
-		sort.Slice(tasks, func(a, b int) bool {
-			return tasks[a].CreatedAt.Before(tasks[b].CreatedAt)
-		})
+		resp := <-msg.Resp
 
-		if page_size == 0 {
-			page_size = len(tasks)
+		if resp.Error != nil {
+			return c.String(resp.Error.Code, resp.Error.Message)
 		}
-
-		// pagninate tasks slice
-		slice_start := (page - 1) * page_size
-		slice_end := slice_start + page_size
-		slice_count := len(tasks)
-		if slice_start < 0 {
-			slice_start = 0
-		}
-		if slice_end < slice_start {
-			slice_end = slice_start
-		}
-		if slice_start > slice_count {
-			slice_start = slice_count
-		}
-		if slice_end > slice_count {
-			slice_end = slice_count
-		}
-		sliced := tasks[slice_start:slice_end]
 
 		return c.JSON(http.StatusOK, map[string]interface{}{
-			"tasks": sliced,
-			"count": slice_count,
+			"tasks": resp.Tasks,
+			"count": resp.Total,
 		})
 	}, authMiddleware)
 	e.GET("/api/v1/task_group/:task_group_id/progress", func(c echo.Context) error {
 		taskGroupId := c.Param("task_group_id")
-		group, found := taskGroupController.TaskGroups[taskGroupId]
-		if !found {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
+
+		msg := APIGetGroupProgressRequest{
+			GroupId: taskGroupId,
+			Resp:    make(chan APIGetGroupProgressResponse),
+		}
+		resp := <-msg.Resp
+
+		if resp.Error != nil {
+			return c.String(resp.Error.Code, resp.Error.Message)
 		}
 
-		group.OperatorsMutex.RLock()
-		defer group.OperatorsMutex.RUnlock()
-		total := len(group.TaskOperators)
-		completed := 0
-		// Iterate all tasks
-		for _, operator := range group.TaskOperators {
-			if operator.Task.IsComplete {
-				completed++
-			}
-		}
-
-		completedPercent := 0.0
-		if total > 0 {
-			completedPercent = float64(completed) / float64(total)
-		}
 		return c.JSON(http.StatusOK, map[string]interface{}{
-			"completedPercent": completedPercent,
+			"completedPercent": resp.CompletedPercent,
 		})
 	}, authMiddleware)
 	e.GET("/api/v1/task_group/:task_group_id/task/:task_id", func(c echo.Context) error {
-		taskGroupId := c.Param("task_group_id")
-		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
-		if !groupFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
-		}
 		taskId := c.Param("task_id")
-		group.OperatorsMutex.RLock()
-		defer group.OperatorsMutex.RUnlock()
-		operator, taskFound := group.TaskOperators[taskId]
-		if !taskFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task with id %v not found in group %v.", taskId, taskGroupId))
+		msg := APIGetTaskRequest{
+			Id:   taskId,
+			Resp: make(chan APIGetTaskResponse),
 		}
-		return c.JSON(http.StatusOK, operator.Task)
+		pool.Inbox <- msg
+		resp := <-msg.Resp
+
+		if resp.Error != nil {
+			return c.String(resp.Error.Code, resp.Error.Message)
+		}
+		return c.JSON(http.StatusOK, resp.Task)
 	}, authMiddleware)
 	e.POST("/api/v1/task_groups", func(c echo.Context) error {
 		// Create a task group

@@ -53,23 +53,19 @@ type WorkerPayloadParentResult struct {
 }
 
 // Post delivers a task to a worker.
-func (client *HttpPostClient) Post(task *Task, taskGroup *TaskGroup) (response WorkerResponse, err error) {
+func (client *HttpPostClient) Post(task *Task) (response WorkerResponse, err error) {
 	// Start preparing the task input by gathering info from parents
 	payloadParents := []WorkerPayloadParentResult{}
 
 	// Get each parent and add result
-	for _, parentId := range task.ParentIds {
-		// error, output, children
-		parentOp, found := taskGroup.TaskOperators[parentId]
-		if found {
-			parentResult := WorkerPayloadParentResult{
-				TaskId: parentOp.Task.Id,
-				Worker: parentOp.Task.Worker,
-				Input:  parentOp.Task.Input,
-				Output: parentOp.Task.Output,
-			}
-			payloadParents = append(payloadParents, parentResult)
+	for _, parentState := range task.ParentStates {
+		parentResult := WorkerPayloadParentResult{
+			TaskId: parentState.ParentId,
+			Worker: parentState.Worker,
+			Input:  parentState.Input,
+			Output: parentState.Output,
 		}
+		payloadParents = append(payloadParents, parentResult)
 	}
 
 	payload := WorkerPayload{
@@ -122,6 +118,7 @@ func (client *HttpPostClient) Post(task *Task, taskGroup *TaskGroup) (response W
 
 	// Parse the response
 	workerResp := WorkerResponse{}
+
 	jsonErr := json.Unmarshal(bodyBytes, &workerResp) // when logging code above is no longer needed : json.NewDecoder(resp.Body).Decode(&workerResp)
 	if jsonErr != nil {
 		return WorkerResponse{}, jsonErr
