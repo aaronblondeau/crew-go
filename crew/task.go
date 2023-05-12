@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-type UpdateMessage struct {
+type UpdateTaskMessage struct {
 	ToTaskId string
 	Update   map[string]interface{}
 }
@@ -14,8 +14,10 @@ type ExecutedMessage struct {
 	TaskId                  string
 	Worker                  string
 	Workgroup               string
+	Key                     string
 	WorkgroupDelayInSeconds int
 	ChildrenDelayInSeconds  int
+	IsComplete              bool
 }
 
 type ExecuteMessage struct {
@@ -31,7 +33,11 @@ type ParentCompletedMessage struct {
 	Output   interface{}
 }
 
-type DeleteMessage struct {
+type RefreshTaskIndexesMessage struct {
+	Task *Task
+}
+
+type DeleteTaskMessage struct {
 	ToTaskId string
 }
 
@@ -53,6 +59,16 @@ type ChildIntroductionAcknowledgementMessage struct {
 type TaskUpdatedMessage struct {
 	Event string `json:"type"`
 	Task  *Task  `json:"task"`
+}
+
+type DeduplicateTaskMessage struct {
+	ToTaskId string
+	Output   interface{}
+}
+
+type DelayTaskMessage struct {
+	ToTaskId       string
+	DelayInSeconds int
 }
 
 type ParentState struct {
@@ -122,6 +138,7 @@ type Task struct {
 	ExecuteTimer        *time.Timer            `json:"-"`
 	Client              TaskClient             `json:"-"`
 	Storage             TaskStorage            `json:"-"`
+	Throttler           *Throttler             `json:"-"`
 }
 
 // NewTask creates a new Task.
@@ -152,10 +169,11 @@ func NewTask() *Task {
 	return &task
 }
 
-func (task *Task) Start(client TaskClient, storage TaskStorage, outbox chan interface{}) {
+func (task *Task) Start(client TaskClient, storage TaskStorage, throttler *Throttler, outbox chan interface{}) {
 	task.Client = client
 	task.Outbox = outbox
 	task.Storage = storage
+	task.Throttler = throttler
 
 	execTimer := time.NewTimer(1000 * time.Second)
 	execTimer.Stop()
@@ -189,16 +207,20 @@ func (task *Task) Start(client TaskClient, storage TaskStorage, outbox chan inte
 		// Process messages:
 		for message := range task.Inbox {
 			switch v := message.(type) {
-			case UpdateMessage:
-				task.Update(message.(UpdateMessage).Update)
+			case UpdateTaskMessage:
+				task.Update(message.(UpdateTaskMessage).Update)
 			case ParentCompletedMessage:
 				task.ParentCompleted(message.(ParentCompletedMessage))
-			case DeleteMessage:
+			case DeleteTaskMessage:
 				task.Delete()
 			case ChildIntroductionMessage:
 				task.ChildIntroduction(message.(ChildIntroductionMessage).ChildId)
 			case ChildIntroductionAcknowledgementMessage:
 				task.ChildIntroductionAcknowledgement(message.(ChildIntroductionAcknowledgementMessage).ParentId, message.(ChildIntroductionAcknowledgementMessage).IsComplete)
+			case DeduplicateTaskMessage:
+				task.Deduplicate(message.(DeduplicateTaskMessage).Output)
+			case DelayTaskMessage:
+				task.Delay(message.(DelayTaskMessage).DelayInSeconds)
 			default:
 				fmt.Printf("I don't know how to handle message of type %T!\n", v)
 			}
@@ -218,7 +240,22 @@ func (task *Task) Start(client TaskClient, storage TaskStorage, outbox chan inte
 	}
 }
 
+func (task *Task) Delay(delayInSeconds int) {
+	task.CancelExecute()
+	task.RunAfter = time.Now().Add(time.Duration(delayInSeconds) * time.Second)
+	task.Save()
+	task.Evaluate()
+}
+
+func (task *Task) Deduplicate(output interface{}) {
+	task.CancelExecute()
+	task.Output = output
+	task.IsComplete = true
+	task.Save()
+}
+
 func (task *Task) Update(update map[string]interface{}) {
+	shouldReIndex := false
 	newName, hasNewName := update["name"].(string)
 	if hasNewName {
 		task.Name = newName
@@ -230,13 +267,15 @@ func (task *Task) Update(update map[string]interface{}) {
 	}
 
 	newWorkgroup, hasNewWorkgroup := update["workgroup"].(string)
-	if hasNewWorkgroup {
+	if hasNewWorkgroup && task.Workgroup != newWorkgroup {
 		task.Workgroup = newWorkgroup
+		shouldReIndex = true
 	}
 
 	newKey, hasNewKey := update["key"].(string)
-	if hasNewKey {
+	if hasNewKey && task.Key != newKey {
 		task.Key = newKey
+		shouldReIndex = true
 	}
 
 	newIsPaused, hasIsPaused := update["isPaused"].(bool)
@@ -304,6 +343,12 @@ func (task *Task) Update(update map[string]interface{}) {
 	}
 	task.Save()
 	task.Evaluate()
+
+	if shouldReIndex {
+		task.Outbox <- RefreshTaskIndexesMessage{
+			Task: task,
+		}
+	}
 }
 
 func (task *Task) ParentCompleted(message ParentCompletedMessage) {
@@ -439,7 +484,26 @@ func (task *Task) Execute() {
 		// We don't save BusyExecuting to storage, so send update to clients
 		task.EmitUpdate("update")
 
+		// Apply worker throttling if a throttler is defined
+		if (task.Throttler != nil) && (task.Worker != "") {
+			query := ThrottlePushQuery{
+				TaskId: task.Id,
+				Worker: task.Worker,
+				Resp:   make(chan bool)}
+			task.Throttler.Push <- query
+			// Block until throttler says it is ok to send task request
+			<-query.Resp
+		}
+
 		workerResponse, err := task.Client.Post(task)
+
+		if (task.Throttler != nil) && (task.Worker != "") {
+			query := ThrottlePopQuery{
+				TaskId: task.Id,
+				Worker: task.Worker}
+			// Let throttler know that task attempt is complete
+			task.Throttler.Pop <- query
+		}
 
 		// decrement attempts
 		task.RemainingAttempts--
@@ -524,6 +588,8 @@ func (task *Task) Execute() {
 			TaskId:                  task.Id,
 			Worker:                  task.Worker,
 			Workgroup:               task.Workgroup,
+			IsComplete:              task.IsComplete,
+			Key:                     task.Key,
 			WorkgroupDelayInSeconds: workerResponse.WorkgroupDelayInSeconds,
 			ChildrenDelayInSeconds:  workerResponse.ChildrenDelayInSeconds,
 		}

@@ -181,7 +181,7 @@ func ServeRestApi(wg *sync.WaitGroup, pool *TaskPool, taskClient TaskClient, emb
 	}, authMiddleware)
 	e.POST("/api/v1/task_groups", func(c echo.Context) error {
 		// Create a task group
-		group := NewTaskGroup("", "", taskGroupController)
+		group := NewTaskGroup("", "")
 		inflate_err := json.NewDecoder(c.Request().Body).Decode(&group)
 		if inflate_err != nil {
 			return c.String(http.StatusBadRequest, inflate_err.Error())
@@ -227,14 +227,18 @@ func ServeRestApi(wg *sync.WaitGroup, pool *TaskPool, taskClient TaskClient, emb
 	e.DELETE("/api/v1/task_group/:task_group_id", func(c echo.Context) error {
 		// Delete a task group
 		taskGroupId := c.Param("task_group_id")
-		_, groupFound := taskGroupController.TaskGroups[taskGroupId]
-		if !groupFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
+
+		msg := APIDeleteGroupRequest{
+			Id:   taskGroupId,
+			Resp: make(chan APIDeleteGroupResponse),
 		}
-		err := taskGroupController.RemoveGroup(taskGroupId)
-		if err != nil {
-			return c.String(http.StatusBadRequest, err.Error())
+		pool.Inbox <- msg
+		resp := <-msg.Resp
+
+		if resp.Error != nil {
+			return c.String(resp.Error.Code, resp.Error.Message)
 		}
+
 		return c.JSON(http.StatusOK, map[string]interface{}{
 			"id":      taskGroupId,
 			"deleted": true,
@@ -242,17 +246,19 @@ func ServeRestApi(wg *sync.WaitGroup, pool *TaskPool, taskClient TaskClient, emb
 	}, authMiddleware)
 	e.DELETE("/api/v1/task_group/:task_group_id/task/:task_id", func(c echo.Context) error {
 		// Delete a task
-		taskGroupId := c.Param("task_group_id")
-		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
-		if !groupFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
+		taskId := c.Param("task_id")
+
+		msg := APIDeleteTaskRequest{
+			Id:   taskId,
+			Resp: make(chan APIDeleteTaskResponse),
+		}
+		pool.Inbox <- msg
+		resp := <-msg.Resp
+
+		if resp.Error != nil {
+			return c.String(resp.Error.Code, resp.Error.Message)
 		}
 
-		taskId := c.Param("task_id")
-		err := group.DeleteTask(taskId)
-		if err != nil {
-			return c.String(http.StatusBadRequest, err.Error())
-		}
 		return c.JSON(http.StatusOK, map[string]interface{}{
 			"id":      taskId,
 			"deleted": true,
@@ -261,10 +267,6 @@ func ServeRestApi(wg *sync.WaitGroup, pool *TaskPool, taskClient TaskClient, emb
 	e.POST("/api/v1/task_group/:task_group_id/reset", func(c echo.Context) error {
 		// Reset a task group.  If the group has seed tasks, all non-seed tasks are removed.  Then all remaining tasks within the group are reset.
 		taskGroupId := c.Param("task_group_id")
-		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
-		if !groupFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
-		}
 
 		remainingAttempts := 5
 		body := make(map[string]interface{})
@@ -276,19 +278,25 @@ func ServeRestApi(wg *sync.WaitGroup, pool *TaskPool, taskClient TaskClient, emb
 			}
 		}
 
-		resetErr := group.Reset(remainingAttempts, nil)
-		if resetErr != nil {
-			return c.String(http.StatusBadRequest, resetErr.Error())
+		msg := APIResetGroupRequest{
+			Id:                taskGroupId,
+			RemainingAttempts: remainingAttempts,
+			Resp:              make(chan APIResetGroupResponse),
 		}
-		return c.JSON(http.StatusOK, group)
+		pool.Inbox <- msg
+		resp := <-msg.Resp
+
+		if resp.Error != nil {
+			return c.String(resp.Error.Code, resp.Error.Message)
+		}
+
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"success": true,
+		})
 	}, authMiddleware)
 	e.POST("/api/v1/task_group/:task_group_id/retry", func(c echo.Context) error {
 		// Force a retry of all incomplete tasks in a task group by incrementing their remainingAttempts value.
 		taskGroupId := c.Param("task_group_id")
-		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
-		if !groupFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
-		}
 
 		remainingAttempts := 5
 		body := make(map[string]interface{})
@@ -300,58 +308,62 @@ func ServeRestApi(wg *sync.WaitGroup, pool *TaskPool, taskClient TaskClient, emb
 			}
 		}
 
-		err := group.RetryAllTasks(remainingAttempts)
-		if err != nil {
-			return c.String(http.StatusBadRequest, err.Error())
+		msg := APIRetryGroupRequest{
+			Id:                taskGroupId,
+			RemainingAttempts: remainingAttempts,
+			Resp:              make(chan APIRetryGroupResponse),
 		}
-		return c.JSON(http.StatusOK, group)
-	}, authMiddleware)
-	e.POST("/api/v1/task_group/:task_group_id/pause", func(c echo.Context) error {
-		// Pause all tasks in group, fan-in updates?
-		taskGroupId := c.Param("task_group_id")
-		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
-		if !groupFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
+		pool.Inbox <- msg
+		resp := <-msg.Resp
+
+		if resp.Error != nil {
+			return c.String(resp.Error.Code, resp.Error.Message)
 		}
 
-		err := group.PauseAllTasks()
-		if err != nil {
-			return c.String(http.StatusBadRequest, err.Error())
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"success": true,
+		})
+	}, authMiddleware)
+	e.POST("/api/v1/task_group/:task_group_id/pause", func(c echo.Context) error {
+		taskGroupId := c.Param("task_group_id")
+		msg := APIPauseResumeGroupRequest{
+			Id:       taskGroupId,
+			IsPaused: true,
+			Resp:     make(chan APIPauseResumeGroupResponse),
 		}
-		return c.JSON(http.StatusOK, group)
+		pool.Inbox <- msg
+		resp := <-msg.Resp
+
+		if resp.Error != nil {
+			return c.String(resp.Error.Code, resp.Error.Message)
+		}
+
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"success": true,
+		})
 	}, authMiddleware)
 	e.POST("/api/v1/task_group/:task_group_id/resume", func(c echo.Context) error {
 		// Resume all tasks in group, fan-in updates?
 		taskGroupId := c.Param("task_group_id")
-		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
-		if !groupFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
+		msg := APIPauseResumeGroupRequest{
+			Id:       taskGroupId,
+			IsPaused: false,
+			Resp:     make(chan APIPauseResumeGroupResponse),
+		}
+		pool.Inbox <- msg
+		resp := <-msg.Resp
+
+		if resp.Error != nil {
+			return c.String(resp.Error.Code, resp.Error.Message)
 		}
 
-		err := group.UnPauseAllTasks()
-		if err != nil {
-			return c.String(http.StatusBadRequest, err.Error())
-		}
-		return c.JSON(http.StatusOK, group)
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"success": true,
+		})
 	}, authMiddleware)
 	e.POST("/api/v1/task_group/:task_group_id/task/:task_id/reset", func(c echo.Context) error {
 		// Reset a task as if it had never been run.  Reject if BusyExecuting.
-		taskGroupId := c.Param("task_group_id")
-		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
-		if !groupFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
-		}
-
 		taskId := c.Param("task_id")
-		group.OperatorsMutex.RLock()
-		operator, taskFound := group.TaskOperators[taskId]
-		group.OperatorsMutex.RUnlock()
-		if !taskFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task with id %v not found in group %v.", taskId, taskGroupId))
-		}
-		if operator.Task.BusyExecuting {
-			return c.String(http.StatusConflict, "Task is busy executing, cannot update.")
-		}
 
 		remainingAttempts := 5
 		body := make(map[string]interface{})
@@ -363,32 +375,23 @@ func ServeRestApi(wg *sync.WaitGroup, pool *TaskPool, taskClient TaskClient, emb
 			}
 		}
 
-		updateComplete := make(chan error)
-		operator.ResetTask(remainingAttempts, updateComplete)
-		updateError := <-updateComplete
-		if updateError != nil {
-			return c.String(http.StatusBadRequest, updateError.Error())
+		msg := APIResetTaskRequest{
+			Id:                taskId,
+			RemainingAttempts: remainingAttempts,
+			Resp:              make(chan APIResetTaskResponse),
 		}
-		return c.JSON(http.StatusOK, operator.Task)
+		pool.Inbox <- msg
+		resp := <-msg.Resp
+
+		if resp.Error != nil {
+			return c.String(resp.Error.Code, resp.Error.Message)
+		}
+
+		return c.JSON(http.StatusOK, resp.Task)
 	}, authMiddleware)
 	e.POST("/api/v1/task_group/:task_group_id/task/:task_id/retry", func(c echo.Context) error {
 		// Force a retry of a task by updating its remainingAttempts value.
-		taskGroupId := c.Param("task_group_id")
-		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
-		if !groupFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
-		}
-
 		taskId := c.Param("task_id")
-		group.OperatorsMutex.RLock()
-		operator, taskFound := group.TaskOperators[taskId]
-		group.OperatorsMutex.RUnlock()
-		if !taskFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task with id %v not found in group %v.", taskId, taskGroupId))
-		}
-		if operator.Task.BusyExecuting {
-			return c.String(http.StatusConflict, "Task is busy executing, cannot update.")
-		}
 
 		remainingAttempts := 5
 		body := make(map[string]interface{})
@@ -400,53 +403,48 @@ func ServeRestApi(wg *sync.WaitGroup, pool *TaskPool, taskClient TaskClient, emb
 			}
 		}
 
-		updateComplete := make(chan error)
-		operator.ExternalUpdates <- TaskUpdate{
-			Update:         map[string]interface{}{"remainingAttempts": remainingAttempts},
-			UpdateComplete: updateComplete,
+		msg := APIRetryTaskRequest{
+			Id:                taskId,
+			RemainingAttempts: remainingAttempts,
+			Resp:              make(chan APIRetryTaskResponse),
 		}
-		updateError := <-updateComplete
-		if updateError != nil {
-			return c.String(http.StatusBadRequest, updateError.Error())
+		pool.Inbox <- msg
+		resp := <-msg.Resp
+
+		if resp.Error != nil {
+			return c.String(resp.Error.Code, resp.Error.Message)
 		}
 
-		return c.JSON(http.StatusOK, operator.Task)
+		return c.JSON(http.StatusOK, resp.Task)
 	}, authMiddleware)
 	e.PUT("/api/v1/task_group/:task_group_id", func(c echo.Context) error {
 		// Update a task group
 		taskGroupId := c.Param("task_group_id")
-		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
-		if !groupFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
-		}
+
 		update := make(map[string]interface{})
 		parseErr := json.NewDecoder(c.Request().Body).Decode(&update)
 		if parseErr != nil {
 			return c.String(http.StatusBadRequest, parseErr.Error())
 		}
-		updateErr := taskGroupController.UpdateGroup(group, update)
-		if updateErr != nil {
-			return c.String(http.StatusBadRequest, updateErr.Error())
+
+		msg := APIUpdateGroupRequest{
+			Id:     taskGroupId,
+			Update: update,
+			Resp:   make(chan APIUpdateGroupResponse),
 		}
-		return c.JSON(http.StatusOK, group)
+		pool.Inbox <- msg
+		resp := <-msg.Resp
+
+		if resp.Error != nil {
+			return c.String(resp.Error.Code, resp.Error.Message)
+		}
+
+		return c.JSON(http.StatusOK, resp.Group)
 	}, authMiddleware)
 	e.PUT("/api/v1/task_group/:task_group_id/task/:task_id", func(c echo.Context) error {
 		// Update a task. Do not update and throw error if Task.BusyExecuting!
-		taskGroupId := c.Param("task_group_id")
-		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
-		if !groupFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
-		}
 		taskId := c.Param("task_id")
-		group.OperatorsMutex.RLock()
-		operator, taskFound := group.TaskOperators[taskId]
-		group.OperatorsMutex.RUnlock()
-		if !taskFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task with id %v not found in group %v.", taskId, taskGroupId))
-		}
-		if operator.Task.BusyExecuting {
-			return c.String(http.StatusConflict, "Task is busy executing, cannot update.")
-		}
+
 		update := make(map[string]interface{})
 		parseErr := json.NewDecoder(c.Request().Body).Decode(&update)
 		if parseErr != nil {
@@ -467,48 +465,19 @@ func ServeRestApi(wg *sync.WaitGroup, pool *TaskPool, taskClient TaskClient, emb
 			}
 		}
 
-		// If parent ids are present validate that all parents exist
-		newParentIds, hasParentIds := update["parentIds"]
-		if hasParentIds {
-			switch t := newParentIds.(type) {
-			case []interface{}:
-				if len(t) == 0 {
-					update["parentIds"] = make([]string, 0)
-				} else {
-					for _, parentIdCandidate := range t {
-						parentId, ok := parentIdCandidate.(string)
-						if ok {
-							// Make sure parent id exists (and isn't self)
-							group.OperatorsMutex.RLock()
-							_, parentFound := group.TaskOperators[parentId]
-							group.OperatorsMutex.RUnlock()
-							if !parentFound {
-								return c.String(http.StatusBadRequest, fmt.Sprintf("Parent %s does not exist", parentId))
-							}
-							if parentId == taskId {
-								return c.String(http.StatusBadRequest, "Task cannot be own parent")
-							}
-						}
-					}
-				}
-			default:
-				// Not expected input type for parentIds
-			}
+		msg := APIUpdateTaskRequest{
+			Id:     taskId,
+			Update: update,
+			Resp:   make(chan APIUpdateTaskResponse),
+		}
+		pool.Inbox <- msg
+		resp := <-msg.Resp
+
+		if resp.Error != nil {
+			return c.String(resp.Error.Code, resp.Error.Message)
 		}
 
-		// Task updates happen in operator goroutine, use a channel to sync
-		// update before we send response
-		updateComplete := make(chan error)
-		operator.ExternalUpdates <- TaskUpdate{
-			Update:         update,
-			UpdateComplete: updateComplete,
-		}
-		updateError := <-updateComplete
-		if updateError != nil {
-			return c.String(http.StatusBadRequest, updateError.Error())
-		}
-
-		return c.JSON(http.StatusOK, operator.Task)
+		return c.JSON(http.StatusOK, resp.Task)
 	}, authMiddleware)
 
 	// Demo worker endpoints
@@ -632,7 +601,7 @@ func ServeRestApi(wg *sync.WaitGroup, pool *TaskPool, taskClient TaskClient, emb
 	// Watch for updates in the task group contoller and deliver them to listening websockets
 	watchers := make(map[string]TaskGroupWatcher, 0)
 	go func() {
-		for taskGroupUpdate := range taskGroupController.TaskGroupUpdates {
+		for taskGroupUpdate := range pool.TaskGroupUpdates {
 			for _, watcher := range watchers {
 				if watcher.TaskGroupId == taskGroupUpdate.TaskGroup.Id {
 					evtJson, jsonErr := json.Marshal(taskGroupUpdate)
@@ -644,9 +613,9 @@ func ServeRestApi(wg *sync.WaitGroup, pool *TaskPool, taskClient TaskClient, emb
 		}
 	}()
 	go func() {
-		for taskUpdate := range taskGroupController.TaskUpdates {
+		for taskUpdate := range pool.TaskUpdates {
 			for _, watcher := range watchers {
-				if watcher.TaskGroupId == taskUpdate.Task.TaskGroupId {
+				if watcher.TaskGroupId == taskUpdate.Task.GroupId {
 					evtJson, jsonErr := json.Marshal(taskUpdate)
 					if jsonErr == nil && !inShutdown {
 						watcher.Channel <- string(evtJson)
@@ -658,10 +627,17 @@ func ServeRestApi(wg *sync.WaitGroup, pool *TaskPool, taskClient TaskClient, emb
 
 	e.GET("/api/v1/task_group/:task_group_id/stream/:token", func(c echo.Context) error {
 		taskGroupId := c.Param("task_group_id")
-		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
-		if !groupFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
+		msg := APIGetGroupRequest{
+			Id:   taskGroupId,
+			Resp: make(chan APIGetGroupResponse),
 		}
+		pool.Inbox <- msg
+		resp := <-msg.Resp
+
+		if resp.Error != nil {
+			return c.String(resp.Error.Code, resp.Error.Message)
+		}
+
 		requestId := uuid.New().String()
 
 		websocket.Handler(func(ws *websocket.Conn) {
@@ -670,7 +646,7 @@ func ServeRestApi(wg *sync.WaitGroup, pool *TaskPool, taskClient TaskClient, emb
 			// Create a "watcher" to keep track of this websocket's request to watch a specific task group
 			sink := make(chan string)
 			watch := TaskGroupWatcher{
-				TaskGroupId: group.Id,
+				TaskGroupId: resp.Group.Id,
 				Channel:     sink,
 				RequestId:   requestId,
 				Socket:      ws,

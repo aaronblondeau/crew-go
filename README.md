@@ -251,3 +251,5 @@ taskGroupsOperator, bootstrapError := storage.Bootstrap(true, client, &throttler
 TODO : When a task with children is reset, should all ancestors also be reset?
 TODO : verify that workgroup pause works across all task groups in the node (???)
 TODO : Make sure duplicate merge (via key) works across all task groups in the node (and update readme above)
+TODO : Add expiration to messages in pool.LostAndFound
+TODO : Use correct case for all type fields (we have everything public so far)
