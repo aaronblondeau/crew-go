@@ -63,3 +63,32 @@ func TestCannotExecuteIfParentsIncomplete(t *testing.T) {
 		t.Fatalf(`CanExecute() = true, want false (task is paused)`)
 	}
 }
+
+func TestCanUpdateTask(t *testing.T) {
+	task := CreateTaskTestTask("5")
+	client := TaskTestClient{}
+	storage := NewMemoryTaskStorage()
+	outbox := make(chan interface{})
+	task.Start(client, storage, nil, outbox)
+
+	task.Inbox <- UpdateTaskMessage{
+		ToTaskId: task.Id,
+		Update: map[string]interface{}{
+			"name": "New Name",
+		},
+	}
+
+	// Wait for something to hit outbox (should be a task updated message)
+	msg := <-outbox
+
+	if task.Name != "New Name" {
+		t.Fatalf(`Task.Name = %v, want %v`, task.Name, "New Name")
+	}
+
+	// msg should be a TaskUpdatedMessage
+	_, msgTypeOk := msg.(TaskUpdatedMessage)
+	if !msgTypeOk {
+		t.Fatalf("msg is not a TaskUpdatedMessage")
+	}
+	task.Stop()
+}

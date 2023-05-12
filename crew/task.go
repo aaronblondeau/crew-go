@@ -139,6 +139,7 @@ type Task struct {
 	Client              TaskClient             `json:"-"`
 	Storage             TaskStorage            `json:"-"`
 	Throttler           *Throttler             `json:"-"`
+	Running             bool                   `json:"-"`
 }
 
 // NewTask creates a new Task.
@@ -165,6 +166,7 @@ func NewTask() *Task {
 		IsDeleting:          false,
 		Inbox:               make(chan interface{}, 8),
 		ChildIds:            make([]string, 0),
+		Running:             false,
 	}
 	return &task
 }
@@ -204,6 +206,7 @@ func (task *Task) Start(client TaskClient, storage TaskStorage, throttler *Throt
 
 	// Entire task lifecycle occurs in this goroutine:
 	go func() {
+		task.Running = true
 		// Process messages:
 		for message := range task.Inbox {
 			switch v := message.(type) {
@@ -226,6 +229,7 @@ func (task *Task) Start(client TaskClient, storage TaskStorage, throttler *Throt
 			}
 		}
 		// Channel closed => system shutting down
+		task.Running = false
 		task.Stop()
 	}()
 
@@ -370,8 +374,9 @@ func (task *Task) Delete() {
 func (task *Task) Stop() {
 	// TODO - What do we do if task is currently executing?
 	task.CancelExecute()
-	close(task.Inbox)
-	// TODO - anything else?
+	if task.Running {
+		close(task.Inbox)
+	}
 }
 
 func (task *Task) Save() {

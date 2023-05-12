@@ -361,13 +361,13 @@ type MemoryTaskStorage struct {
 }
 
 // SaveTask does nothing.
-func (storage *MemoryTaskStorage) SaveTask(group *TaskGroup, task *Task) (err error) {
+func (storage *MemoryTaskStorage) SaveTask(task *Task) (err error) {
 	// Do nothing
 	return nil
 }
 
 // DeleteTask does nothing.
-func (storage *MemoryTaskStorage) DeleteTask(group *TaskGroup, task *Task) (err error) {
+func (storage *MemoryTaskStorage) DeleteTask(task *Task) (err error) {
 	// Do nothing
 	return nil
 }
