@@ -350,9 +350,9 @@ func (pool *TaskPool) ForwardMessage(taskId string, msg interface{}) {
 }
 
 func (pool *TaskPool) Stop(done chan bool) {
-	// Close all task inboxes
+	// Shutdown all tasks
 	for _, task := range pool.Tasks {
-		close(task.Inbox)
+		task.Stop()
 	}
 
 	// Close pool inbox
@@ -414,14 +414,9 @@ func (pool *TaskPool) HandleExecutedMessage(msg ExecutedMessage) {
 }
 
 func (pool *TaskPool) DestroyTask(task *Task) {
-	// Send delete to task (task will remove self from storage)
-
 	task.Inbox <- DeleteTaskMessage{
 		ToTaskId: task.Id,
 	}
-
-	// Close task's channel
-	close(task.Inbox)
 
 	// Remove task from indexes
 	pool.RemoveTaskFromIndexes(task)

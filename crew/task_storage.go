@@ -21,7 +21,7 @@ type TaskStorage interface {
 
 // Redis Storage
 
-// JsonFilesystemTaskStorage stores tasks in the filesystem as JSON files.
+// RedisTaskStorage stores tasks in the filesystem as JSON files.
 type RedisTaskStorage struct {
 	Client *redis.Client
 }

@@ -172,6 +172,9 @@ func NewTask() *Task {
 }
 
 func (task *Task) Start(client TaskClient, storage TaskStorage, throttler *Throttler, outbox chan interface{}) {
+	if task.Running {
+		return
+	}
 	task.Client = client
 	task.Outbox = outbox
 	task.Storage = storage
@@ -192,55 +195,55 @@ func (task *Task) Start(client TaskClient, storage TaskStorage, throttler *Throt
 	}
 	task.ParentStates = parentStates
 
-	// Watch the execute timer:
-	go func() {
-		for _ = range task.ExecuteTimer.C {
-			// Exec message for self is still sent via outbox so
-			// that the layer above can perform throttling.
-			task.Outbox <- ExecuteMessage{
-				ToTaskId: task.Id,
-				Worker:   task.Worker,
+	if !task.IsComplete {
+		// Watch the execute timer:
+		go func() {
+			for _ = range task.ExecuteTimer.C {
+				// Exec message for self is still sent via outbox so
+				// that the layer above can perform throttling.
+				task.Outbox <- ExecuteMessage{
+					ToTaskId: task.Id,
+					Worker:   task.Worker,
+				}
 			}
-		}
-	}()
+		}()
 
-	// Entire task lifecycle occurs in this goroutine:
-	go func() {
-		task.Running = true
-		// Process messages:
-		for message := range task.Inbox {
-			switch v := message.(type) {
-			case UpdateTaskMessage:
-				task.Update(message.(UpdateTaskMessage).Update)
-			case ParentCompletedMessage:
-				task.ParentCompleted(message.(ParentCompletedMessage))
-			case DeleteTaskMessage:
-				task.Delete()
-			case ChildIntroductionMessage:
-				task.ChildIntroduction(message.(ChildIntroductionMessage).ChildId)
-			case ChildIntroductionAcknowledgementMessage:
-				task.ChildIntroductionAcknowledgement(message.(ChildIntroductionAcknowledgementMessage).ParentId, message.(ChildIntroductionAcknowledgementMessage).IsComplete)
-			case DeduplicateTaskMessage:
-				task.Deduplicate(message.(DeduplicateTaskMessage).Output)
-			case DelayTaskMessage:
-				task.Delay(message.(DelayTaskMessage).DelayInSeconds)
-			default:
-				fmt.Printf("I don't know how to handle message of type %T!\n", v)
+		// Entire task lifecycle occurs in this goroutine:
+		go func() {
+			task.Running = true
+			// Process messages:
+			for message := range task.Inbox {
+				switch v := message.(type) {
+				case UpdateTaskMessage:
+					task.Update(message.(UpdateTaskMessage).Update)
+				case ParentCompletedMessage:
+					task.ParentCompleted(message.(ParentCompletedMessage))
+				case DeleteTaskMessage:
+					task.Delete()
+				case ChildIntroductionMessage:
+					task.ChildIntroduction(message.(ChildIntroductionMessage).ChildId)
+				case ChildIntroductionAcknowledgementMessage:
+					task.ChildIntroductionAcknowledgement(message.(ChildIntroductionAcknowledgementMessage).ParentId, message.(ChildIntroductionAcknowledgementMessage).IsComplete)
+				case DeduplicateTaskMessage:
+					task.Deduplicate(message.(DeduplicateTaskMessage).Output)
+				case DelayTaskMessage:
+					task.Delay(message.(DelayTaskMessage).DelayInSeconds)
+				default:
+					fmt.Printf("I don't know how to handle message of type %T!\n", v)
+				}
 			}
-		}
-		// Channel closed => system shutting down
-		task.Running = false
-		task.Stop()
-	}()
+			task.Running = false
+		}()
 
-	// Send intro to parents (make sure to set ack sent)
-	for _, parentId := range task.ParentIds {
-		task.Outbox <- ChildIntroductionMessage{
-			ToTaskId: parentId,
-			ChildId:  task.Id,
+		// Send intro to parents (make sure to set ack sent)
+		for _, parentId := range task.ParentIds {
+			task.Outbox <- ChildIntroductionMessage{
+				ToTaskId: parentId,
+				ChildId:  task.Id,
+			}
+			parentState := task.ParentStates[parentId]
+			parentState.IntroSent = true
 		}
-		parentState := task.ParentStates[parentId]
-		parentState.IntroSent = true
 	}
 }
 
@@ -256,6 +259,7 @@ func (task *Task) Deduplicate(output interface{}) {
 	task.Output = output
 	task.IsComplete = true
 	task.Save()
+	task.Stop()
 }
 
 func (task *Task) Update(update map[string]interface{}) {
@@ -297,9 +301,13 @@ func (task *Task) Update(update map[string]interface{}) {
 		}
 	}
 
+	shouldStop := false
 	newIsComplete, hasIsComplete := update["isComplete"].(bool)
 	if hasIsComplete {
 		task.IsComplete = newIsComplete
+		if task.IsComplete {
+			shouldStop = true
+		}
 	}
 
 	newRemainingAttempts, hasRemainingAttempts := update["remainingAttempts"]
@@ -352,6 +360,10 @@ func (task *Task) Update(update map[string]interface{}) {
 		task.Outbox <- RefreshTaskIndexesMessage{
 			Task: task,
 		}
+	}
+
+	if shouldStop {
+		task.Stop()
 	}
 }
 
@@ -610,8 +622,8 @@ func (task *Task) Execute() {
 					Output:   task.Output,
 				}
 			}
+			task.Stop()
 		}
-
 	} else {
 		// TODO cannot execute
 	}
