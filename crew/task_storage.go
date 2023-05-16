@@ -1,425 +1,285 @@
 package crew
 
-import (
-	"context"
-	"encoding/json"
-	"fmt"
-	"os"
-	"strings"
+// TODO - cascading deletes of children? (only when deleting child's last parent)
+// TODO - prevent changes to workgroup, key, taskGroupId in task
 
-	"github.com/redis/go-redis/v9"
+import (
+	"errors"
+	"sync"
+
+	"github.com/google/uuid"
 )
 
 // TaskStorage defines the methods required for implementing crew's task storage interface.
 type TaskStorage interface {
-	SaveTask(group *TaskGroup, task *Task) (err error)
-	DeleteTask(group *TaskGroup, task *Task) (err error)
-	SaveTaskGroup(group *TaskGroup) (err error)
-	DeleteTaskGroup(group *TaskGroup) (err error)
-	Bootstrap(shouldOperate bool, client TaskClient, throttler *Throttler) (taskGroupController *TaskGroupController, err error)
+	SaveTask(task *Task) (err error)
+	FindTask(taskId string) (task *Task, err error)
+	DeleteTask(taskId string) (err error)
+	GetTaskChildren(taskId string) (tasks []*Task, err error)
+	GetTaskParents(taskId string) (tasks []*Task, err error)
+	GetTasksInWorkgroup(workgroup string) (tasks []*Task, err error)
+	GetTasksWithKey(key string) (tasks []*Task, err error)
+
+	SaveTaskGroup(taskGroup *TaskGroup) (err error)
+	AllTaskGroups() (taskGroups []*TaskGroup)
+	AllTasksInGroup(taskGroupId string) (tasks []*Task)
+	FindTaskGroup(taskGroupId string) (taskGroup *TaskGroup, err error)
+	DeleteTaskGroup(taskGroupId string) (err error)
 }
 
-// Redis Storage
-
-// JsonFilesystemTaskStorage stores tasks in the filesystem as JSON files.
-type RedisTaskStorage struct {
-	Client *redis.Client
-}
-
-// TaskKey returns the key for a task.
-func (storage *RedisTaskStorage) TaskKey(group *TaskGroup, task *Task) string {
-	// IMPORTANT - tasks and groups should have differing root paths so that we can SCAN groups without getting tasks
-	return "go-crew/group-tasks/" + group.Id + "/tasks/" + task.Id
-}
-
-// TaskGroupKey returns the key for a task group.
-func (storage *RedisTaskStorage) TaskGroupKey(group *TaskGroup) string {
-	// IMPORTANT - tasks and groups should have differing root paths so that we can SCAN groups without getting tasks
-	return "go-crew/groups/" + group.Id
-}
-
-// TaskGroupTasksPrefix returns the SCAN prefix to use to search for all tasks within a group.
-func (storage *RedisTaskStorage) TaskGroupTasksPrefix(group *TaskGroup) string {
-	return "go-crew/group-tasks/" + group.Id + "/*"
-}
-
-// TaskGroupsPrefix returns the SCAN prefix to use to search for all groups.
-func (storage *RedisTaskStorage) TaskGroupsPrefix() string {
-	return "go-crew/groups/*"
-}
-
-// SaveTask saves a task to redis.
-func (storage *RedisTaskStorage) SaveTask(group *TaskGroup, task *Task) (err error) {
-	if task.IsDeleting {
-		// Avoid re-creating a task that is getting deleted
-		return nil
-	}
-	taskJson, jsonErr := json.Marshal(task)
-	if jsonErr != nil {
-		return jsonErr
-	}
-	taskJsonStr := string(taskJson)
-
-	ctx := context.Background()
-	key := storage.TaskKey(group, task)
-	redisErr := storage.Client.Set(ctx, key, taskJsonStr, 0).Err()
-	return redisErr
-}
-
-// DeleteTask deletes a task from redis.
-func (storage *RedisTaskStorage) DeleteTask(group *TaskGroup, task *Task) (err error) {
-	key := storage.TaskKey(group, task)
-	ctx := context.Background()
-	redisErr := storage.Client.Del(ctx, key).Err()
-	return redisErr
-}
-
-// SaveTaskGroup saves a task group to redis.
-func (storage *RedisTaskStorage) SaveTaskGroup(group *TaskGroup) (err error) {
-	if group.IsDeleting {
-		// Avoid re-creating a group that is getting deleted
-		return nil
-	}
-
-	groupJson, jsonErr := json.Marshal(group)
-	if jsonErr != nil {
-		return jsonErr
-	}
-	groupJsonStr := string(groupJson)
-
-	ctx := context.Background()
-	key := storage.TaskGroupKey(group)
-	redisErr := storage.Client.Set(ctx, key, groupJsonStr, 0).Err()
-	return redisErr
-}
-
-// DeleteTaskGroup deletes a task group from redis.
-func (storage *RedisTaskStorage) DeleteTaskGroup(group *TaskGroup) (err error) {
-	key := storage.TaskGroupKey(group)
-	ctx := context.Background()
-	// Delete the group
-	redisErr := storage.Client.Del(ctx, key).Err()
-	if redisErr != nil {
-		return redisErr
-	}
-
-	// Delete all tasks in the group
-	iter := storage.Client.Scan(ctx, 0, storage.TaskGroupTasksPrefix(group), 0).Iterator()
-	for iter.Next(ctx) {
-		taskKey := iter.Val()
-		fmt.Println("~~ Deleting task group child task", taskKey)
-		redisErr = storage.Client.Del(ctx, taskKey).Err()
-		if redisErr != nil {
-			return redisErr
-		}
-	}
-	return nil
-}
-
-// Bootstrap loads all task groups and tasks from the filesystem.
-func (storage *RedisTaskStorage) Bootstrap(shouldOperate bool, client TaskClient, throttler *Throttler) (taskGroupController *TaskGroupController, err error) {
-	taskGroupController = NewTaskGroupController(storage, throttler)
-
-	ctx := context.Background()
-	iter := storage.Client.Scan(ctx, 0, storage.TaskGroupsPrefix(), 0).Iterator()
-
-	for iter.Next(ctx) {
-		// Load each group
-		groupKey := iter.Val()
-		fmt.Println("~~ Loading group", groupKey)
-
-		groupData, readGroupErr := storage.Client.Get(ctx, groupKey).Bytes()
-		if readGroupErr != nil {
-			fmt.Println("~~ Skipping group - failed to read group key", readGroupErr)
-			continue
-		}
-
-		group := NewTaskGroup("", "", taskGroupController)
-		groupParseError := json.Unmarshal(groupData, &group)
-		if groupParseError != nil {
-			fmt.Println("~~ Skipping group - failed to parse group value", groupParseError)
-			continue
-		}
-		// Make sure group uses this storage
-		group.Storage = storage
-
-		// Load each group's tasks
-		taskGroupTasks := make([]*Task, 0)
-		tasksIter := storage.Client.Scan(ctx, 0, storage.TaskGroupTasksPrefix(group), 0).Iterator()
-		for tasksIter.Next(ctx) {
-			taskKey := tasksIter.Val()
-			fmt.Println("~~ Loading task", groupKey)
-
-			taskData, readTaskErr := storage.Client.Get(ctx, taskKey).Bytes()
-			if readTaskErr != nil {
-				fmt.Println("~~ Skipping task - failed to read task key", readTaskErr)
-				continue
-			}
-
-			task := Task{
-				// Errors:    make([]interface{}, 0),
-				// ParentIds: make([]string, 0),
-				// Children:  make([]*Task, 0),
-			}
-			taskParseError := json.Unmarshal(taskData, &task)
-
-			// Make sure group id matches the group being loaded
-			task.TaskGroupId = group.Id
-			if taskParseError != nil {
-				fmt.Println("~~ Skipping task - failed to parse task value", taskKey, taskParseError)
-				continue
-			}
-
-			taskGroupTasks = append(taskGroupTasks, &task)
-		}
-
-		taskGroupController.AddGroup(group)
-		group.PreloadTasks(taskGroupTasks, client)
-	}
-
-	if shouldOperate {
-		taskGroupController.Operate()
-	}
-	return
-}
-
-// NewRedisTaskStorage creates a new RedisTaskStorage.
-func NewRedisTaskStorage(Addr string, Password string, DB int) *RedisTaskStorage {
-	client := redis.NewClient(&redis.Options{
-		Addr:     Addr,
-		Password: Password,
-		DB:       DB,
-	})
-	pingCmd := client.Ping(context.Background())
-	pingErr := pingCmd.Err()
-	if pingErr != nil {
-		panic(pingErr)
-	}
-	storage := RedisTaskStorage{
-		Client: client,
-	}
-	return &storage
-}
-
-// Filesystem Storage (JSON)
-
-// JsonFilesystemTaskStorage stores tasks in the filesystem as JSON files.
-type JsonFilesystemTaskStorage struct {
-	BasePath string
-}
-
-// TaskPath returns the path to a task's JSON file.
-func (storage *JsonFilesystemTaskStorage) TaskPath(group *TaskGroup, task *Task) string {
-	return storage.TaskGroupDir(group) + "/" + task.Id + ".json"
-}
-
-// TaskGroupDir returns the path to a task group's directory.
-func (storage *JsonFilesystemTaskStorage) TaskGroupDir(group *TaskGroup) string {
-	return storage.BasePath + "/task_groups/" + group.Id
-}
-
-// TaskGroupPath returns the path to a task group's JSON file.
-func (storage *JsonFilesystemTaskStorage) TaskGroupPath(group *TaskGroup) string {
-	return storage.TaskGroupDir(group) + "/group.json"
-}
-
-// SaveTask saves a task to the filesystem.
-func (storage *JsonFilesystemTaskStorage) SaveTask(group *TaskGroup, task *Task) (err error) {
-	if task.IsDeleting {
-		// Avoid re-creating a task that is getting deleted
-		return nil
-	}
-	taskJson, jsonErr := json.Marshal(task)
-	if jsonErr != nil {
-		return jsonErr
-	}
-	taskBytes := []byte(taskJson)
-	writeErr := os.WriteFile(storage.TaskPath(group, task), taskBytes, 0644)
-	return writeErr
-}
-
-// DeleteTask deletes a task from the filesystem.
-func (storage *JsonFilesystemTaskStorage) DeleteTask(group *TaskGroup, task *Task) (err error) {
-	filePath := storage.TaskPath(group, task)
-	_, statError := os.Stat(filePath)
-	if statError != nil {
-		// Stat error => file didn't exist
-		return nil
-	}
-	removeError := os.Remove(filePath)
-	if removeError != nil {
-		fmt.Println("JsonFilesystemTaskStorage.DeleteTask Error", removeError, filePath)
-	}
-	return removeError
-}
-
-// SaveTaskGroup saves a task group to the filesystem.
-func (storage *JsonFilesystemTaskStorage) SaveTaskGroup(group *TaskGroup) (err error) {
-	if group.IsDeleting {
-		// Avoid re-creating a group that is getting deleted
-		return nil
-	}
-	// Make sure task group dir exists
-	groupDir := storage.TaskGroupDir(group)
-	if _, err := os.Stat(groupDir); os.IsNotExist(err) {
-		os.MkdirAll(groupDir, os.ModeDir)
-	}
-
-	groupJson, jsonErr := json.Marshal(group)
-	if jsonErr != nil {
-		return jsonErr
-	}
-	groupBytes := []byte(groupJson)
-	writeErr := os.WriteFile(storage.TaskGroupPath(group), groupBytes, 0644)
-	return writeErr
-}
-
-// DeleteTaskGroup deletes a task group from the filesystem.
-func (storage *JsonFilesystemTaskStorage) DeleteTaskGroup(group *TaskGroup) (err error) {
-	// Since we're using os.RemoveAll(), make sure that there is a BasePath set
-	if (storage.BasePath == "") || (storage.BasePath == "/") {
-		panic("BasePath not set for storage!")
-	}
-	groupDir := storage.TaskGroupDir(group)
-	if (groupDir == "") || (groupDir == "/") {
-		panic("Bad group directory - could delete everything!")
-	}
-
-	removeError := os.RemoveAll(groupDir)
-	return removeError
-}
-
-// Bootstrap loads all task groups and tasks from the filesystem.
-func (storage *JsonFilesystemTaskStorage) Bootstrap(shouldOperate bool, client TaskClient, throttler *Throttler) (taskGroupController *TaskGroupController, err error) {
-	taskGroupController = NewTaskGroupController(storage, throttler)
-
-	entries, readDirError := os.ReadDir(storage.BasePath + "/task_groups")
-	if readDirError != nil {
-		return taskGroupController, readDirError
-	}
-
-	for _, groupEntry := range entries {
-		if groupEntry.IsDir() {
-			// Look for dir/group.json
-			groupDir := storage.BasePath + "/task_groups/" + groupEntry.Name()
-			fmt.Println("~~ Bootstrap reading group dir", groupDir)
-			groupJsonPath := groupDir + "/group.json"
-			_, groupFileExistError := os.Stat(groupJsonPath)
-			if !os.IsNotExist(groupFileExistError) {
-				// group.json exists => this is a task group directory
-
-				groupData, readGroupErr := os.ReadFile(groupJsonPath)
-				if readGroupErr != nil {
-					fmt.Println("~~ Skipping group - failed to read group.json", readGroupErr)
-					continue
-				}
-
-				group := NewTaskGroup("", "", taskGroupController)
-				groupParseError := json.Unmarshal(groupData, &group)
-				if groupParseError != nil {
-					fmt.Println("~~ Skipping group - failed to parse group.json", groupParseError)
-					continue
-				}
-				// Make sure group uses this storage
-				group.Storage = storage
-
-				// group ok, look for tasks
-				taskGroupTasks := make([]*Task, 0)
-
-				taskEntries, readGroupDirError := os.ReadDir(groupDir)
-				if readGroupDirError != nil {
-					fmt.Println("~~ Failed to scan for for tasks", readGroupDirError)
-					continue
-				}
-
-				for _, taskEntry := range taskEntries {
-					// Make sure entry is a file that ends with .json
-					if !taskEntry.IsDir() && taskEntry.Name() != "group.json" && strings.HasSuffix(taskEntry.Name(), ".json") {
-						taskFilePath := groupDir + "/" + taskEntry.Name()
-						fmt.Println("~~ Bootstrap reading task file", taskFilePath)
-						taskData, taskDataErr := os.ReadFile(taskFilePath)
-						if taskDataErr != nil {
-							fmt.Println("~~ Skipping task - failed to read .json", taskFilePath, taskDataErr)
-							continue
-						}
-
-						task := Task{
-							// Errors:    make([]interface{}, 0),
-							// ParentIds: make([]string, 0),
-							// Children:  make([]*Task, 0),
-						}
-						taskParseError := json.Unmarshal(taskData, &task)
-						// Make sure group id matches the group being loaded
-						task.TaskGroupId = group.Id
-						if taskParseError != nil {
-							fmt.Println("~~ Skipping task - failed to parse .json", taskFilePath, taskParseError)
-							continue
-						}
-
-						taskGroupTasks = append(taskGroupTasks, &task)
-					}
-				}
-
-				taskGroupController.AddGroup(group)
-				group.PreloadTasks(taskGroupTasks, client)
-			} else {
-				fmt.Println("~~ Cannot find group.json")
-			}
-		}
-	}
-
-	if shouldOperate {
-		taskGroupController.Operate()
-	}
-	return
-}
-
-// NewJsonFilesystemTaskStorage creates a new JsonFilesystemTaskStorage.
-func NewJsonFilesystemTaskStorage(basePath string) *JsonFilesystemTaskStorage {
-	storage := JsonFilesystemTaskStorage{
-		BasePath: basePath,
-	}
-	return &storage
-}
-
-// Memory Storage
-
-// MemoryTaskStorage is a task storage that does not persist tasks. This is meant for use in tests.
+// MemoryTaskStorage is a task storage that only stores state in memory.
 type MemoryTaskStorage struct {
-}
-
-// SaveTask does nothing.
-func (storage *MemoryTaskStorage) SaveTask(group *TaskGroup, task *Task) (err error) {
-	// Do nothing
-	return nil
-}
-
-// DeleteTask does nothing.
-func (storage *MemoryTaskStorage) DeleteTask(group *TaskGroup, task *Task) (err error) {
-	// Do nothing
-	return nil
-}
-
-// SaveTaskGroup does nothing.
-func (storage *MemoryTaskStorage) SaveTaskGroup(group *TaskGroup) (err error) {
-	// Do nothing
-	return nil
-}
-
-// DeleteTaskGroup does nothing.
-func (storage *MemoryTaskStorage) DeleteTaskGroup(group *TaskGroup) (err error) {
-	// Do nothing
-	return nil
-}
-
-// Bootstrap creates an empty task group controller.
-func (storage *MemoryTaskStorage) Bootstrap(shouldOperate bool, client TaskClient, throttler *Throttler) (taskGroupController *TaskGroupController, err error) {
-	controller := NewTaskGroupController(storage, throttler)
-	return controller, nil
+	taskGroups    map[string]*TaskGroup
+	tasks         map[string]*Task
+	idxWorkgroups map[string][]*Task
+	idxKeys       map[string][]*Task
+	idxGroups     map[string][]*Task
+	Mutex         sync.RWMutex
 }
 
 // NewMemoryTaskStorage creates a new MemoryTaskStorage.
 func NewMemoryTaskStorage() *MemoryTaskStorage {
-	storage := MemoryTaskStorage{}
+	storage := MemoryTaskStorage{
+		taskGroups:    make(map[string]*TaskGroup),
+		tasks:         make(map[string]*Task),
+		idxWorkgroups: make(map[string][]*Task),
+		idxKeys:       make(map[string][]*Task),
+		idxGroups:     make(map[string][]*Task),
+	}
 	return &storage
+}
+
+// SaveTask saves a task.
+func (storage *MemoryTaskStorage) SaveTask(task *Task) (err error) {
+	storage.Mutex.Lock()
+	defer storage.Mutex.Unlock()
+	if task.Id == "" {
+		task.Id = uuid.New().String()
+	}
+	_, exists := storage.tasks[task.Id]
+	if !exists {
+		storage.tasks[task.Id] = task
+
+		// Add to indexes
+		if _, idxWorkgroupsExists := storage.idxWorkgroups[task.Workgroup]; !idxWorkgroupsExists {
+			storage.idxWorkgroups[task.Workgroup] = make([]*Task, 0)
+		}
+		storage.idxWorkgroups[task.Workgroup] = append(storage.idxWorkgroups[task.Workgroup], task)
+
+		if _, idxKeysExists := storage.idxKeys[task.Key]; !idxKeysExists {
+			storage.idxKeys[task.Key] = make([]*Task, 0)
+		}
+		storage.idxKeys[task.Key] = append(storage.idxKeys[task.Key], task)
+
+		if _, idxGroupsExists := storage.idxGroups[task.TaskGroupId]; !idxGroupsExists {
+			storage.idxGroups[task.TaskGroupId] = make([]*Task, 0)
+		}
+		storage.idxGroups[task.TaskGroupId] = append(storage.idxGroups[task.TaskGroupId], task)
+	}
+	// Nothing to do for memory storage if already exists
+	return nil
+}
+
+// FindTask finds a task by task group id and task id.
+func (storage *MemoryTaskStorage) FindTask(taskId string) (task *Task, err error) {
+	storage.Mutex.RLock()
+	defer storage.Mutex.RUnlock()
+	task, found := storage.tasks[taskId]
+	if !found {
+		return nil, errors.New("task not found")
+	}
+	return task, nil
+}
+
+// Delete task deletes a task by task id.
+func (storage *MemoryTaskStorage) DeleteTask(taskId string) (err error) {
+	storage.Mutex.Lock()
+	defer storage.Mutex.Unlock()
+
+	task, found := storage.tasks[taskId]
+	if found {
+		// Remove from workgroups index
+		idxWorkgroup, idxWorkgroupFound := storage.idxWorkgroups[task.Workgroup]
+		if idxWorkgroupFound {
+			for i, task := range idxWorkgroup {
+				if task.Id == taskId {
+					storage.idxWorkgroups[task.Workgroup] = append(idxWorkgroup[:i], idxWorkgroup[i+1:]...)
+					break
+				}
+			}
+		}
+		// If was last item in workgroups index, remove the index
+		if len(idxWorkgroup) == 0 {
+			delete(storage.idxWorkgroups, task.Workgroup)
+		}
+
+		// Remove from keys index
+		idxKey, idxKeyFound := storage.idxKeys[task.Key]
+		if idxKeyFound {
+			for i, task := range idxKey {
+				if task.Id == taskId {
+					storage.idxKeys[task.Key] = append(idxKey[:i], idxKey[i+1:]...)
+					break
+				}
+			}
+		}
+		// If was last item in keys index, remove the index
+		if len(idxKey) == 0 {
+			delete(storage.idxKeys, task.Key)
+		}
+
+		// Remove from groups index
+		idxGroup, idxGroupFound := storage.idxGroups[task.TaskGroupId]
+		if idxGroupFound {
+			for i, task := range idxGroup {
+				if task.Id == taskId {
+					storage.idxGroups[task.TaskGroupId] = append(idxGroup[:i], idxGroup[i+1:]...)
+					break
+				}
+			}
+		}
+		// If was last item in groups index, remove the index
+		if len(idxGroup) == 0 {
+			delete(storage.idxGroups, task.TaskGroupId)
+		}
+
+		// Remove from tasks
+		delete(storage.tasks, taskId)
+	}
+	return nil
+}
+
+// SaveTaskGroup doesn't do anything for memory storage.
+func (storage *MemoryTaskStorage) SaveTaskGroup(taskGroup *TaskGroup) (err error) {
+	storage.Mutex.Lock()
+	defer storage.Mutex.Unlock()
+	if taskGroup.Id == "" {
+		taskGroup.Id = uuid.New().String()
+	}
+	_, exists := storage.taskGroups[taskGroup.Id]
+	if !exists {
+		storage.taskGroups[taskGroup.Id] = taskGroup
+	}
+	return nil
+}
+
+// FindTaskGroup finds a task group by task group id.
+func (storage *MemoryTaskStorage) FindTaskGroup(taskGroupId string) (taskGroup *TaskGroup, err error) {
+	storage.Mutex.RLock()
+	defer storage.Mutex.RUnlock()
+	taskGroup, found := storage.taskGroups[taskGroupId]
+	if !found {
+		return nil, errors.New("task group not found")
+	}
+	return taskGroup, nil
+}
+
+// All TaskGroups returns all task groups.
+func (storage *MemoryTaskStorage) AllTaskGroups() (taskGroups []*TaskGroup) {
+	storage.Mutex.RLock()
+	defer storage.Mutex.RUnlock()
+	for _, taskGroup := range storage.taskGroups {
+		taskGroups = append(taskGroups, taskGroup)
+	}
+	return taskGroups
+}
+
+// All TaskGroups returns all task groups.
+func (storage *MemoryTaskStorage) AllTasksInGroup(taskGroupId string) (tasks []*Task) {
+	storage.Mutex.RLock()
+	defer storage.Mutex.RUnlock()
+	tasks = make([]*Task, 0)
+	groupTasks, groupTasksFound := storage.idxGroups[taskGroupId]
+	if groupTasksFound {
+		for _, task := range groupTasks {
+			tasks = append(tasks, task)
+		}
+	}
+	return tasks
+}
+
+// GetTaskChildren returns the children of a task.
+func (storage *MemoryTaskStorage) GetTaskChildren(taskId string) (tasks []*Task, err error) {
+	storage.Mutex.RLock()
+	defer storage.Mutex.RUnlock()
+
+	children := make([]*Task, 0)
+	for _, task := range storage.tasks {
+		for _, parentId := range task.ParentIds {
+			if parentId == taskId {
+				children = append(children, task)
+			}
+		}
+	}
+	return children, nil
+}
+
+// GetTaskParents returns the parents of a task.
+func (storage *MemoryTaskStorage) GetTaskParents(taskId string) (tasks []*Task, err error) {
+	storage.Mutex.RLock()
+	defer storage.Mutex.RUnlock()
+
+	parents := make([]*Task, 0)
+	task, findError := storage.FindTask(taskId)
+	if findError != nil {
+		return parents, findError
+	}
+
+	for _, parentId := range task.ParentIds {
+		parent, parentFindError := storage.FindTask(parentId)
+		if parentFindError == nil {
+			parents = append(parents, parent)
+		}
+	}
+
+	return parents, nil
+}
+
+func (storage *MemoryTaskStorage) GetTasksInWorkgroup(workgroup string) (tasks []*Task, err error) {
+	storage.Mutex.RLock()
+	defer storage.Mutex.RUnlock()
+
+	tasks = make([]*Task, 0)
+	idxWorkgroup, idxWorkgroupFound := storage.idxWorkgroups[workgroup]
+	if idxWorkgroupFound {
+		tasks = idxWorkgroup
+	}
+	return tasks, nil
+}
+
+func (storage *MemoryTaskStorage) GetTasksWithKey(key string) (tasks []*Task, err error) {
+	storage.Mutex.RLock()
+	defer storage.Mutex.RUnlock()
+
+	tasks = make([]*Task, 0)
+	idxKey, idxKeyFound := storage.idxKeys[key]
+	if idxKeyFound {
+		tasks = idxKey
+	}
+	return tasks, nil
+}
+
+// DeleteTaskGroup deletes a task group by task group id.
+func (storage *MemoryTaskStorage) DeleteTaskGroup(taskGroupId string) (err error) {
+	// Get all tasks in the group (in own lock)
+	storage.Mutex.RLock()
+	tasks := make([]*Task, 0)
+	groupTasks, groupTasksFound := storage.idxGroups[taskGroupId]
+	if groupTasksFound {
+		tasks = groupTasks
+	}
+	storage.Mutex.RUnlock()
+
+	// Delete all tasks in the group
+	for _, task := range tasks {
+		storage.DeleteTask(task.Id)
+	}
+
+	// Delete the task group
+	storage.Mutex.Lock()
+	defer storage.Mutex.Unlock()
+
+	delete(storage.taskGroups, taskGroupId)
+	delete(storage.idxGroups, taskGroupId)
+	return nil
 }

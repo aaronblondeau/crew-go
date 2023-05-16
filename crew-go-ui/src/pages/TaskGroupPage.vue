@@ -291,9 +291,9 @@ async function watchGroup () {
   unwatchGroup()
   cancelWatchGroup = await taskGroupStore.watchTaskGroup(taskGroupId.value, (event: any) => {
     const payload = JSON.parse(event)
-    if (payload.type === 'update' && _.has(payload, 'task_group')) {
-      taskGroup.value = payload.task_group
-    } else if (payload.type === 'delete' && _.has(payload, 'task_group')) {
+    if (payload.type === 'update' && _.has(payload, 'taskGroup')) {
+      taskGroup.value = payload.taskGroup
+    } else if (payload.type === 'delete' && _.has(payload, 'taskGroup')) {
       // This task group has been deleted!
       $q.dialog({
         title: 'Task Group Deleted',
