@@ -8,7 +8,7 @@ func TestCreateTaskGroup(t *testing.T) {
 	storage := NewMemoryTaskStorage()
 	taskGroup := NewTaskGroup("group1", "group1")
 
-	storage.SaveTaskGroup(taskGroup)
+	storage.SaveTaskGroup(taskGroup, true)
 	found, err := storage.FindTaskGroup("group1")
 	if err != nil {
 		t.Fatal(err)
@@ -21,10 +21,10 @@ func TestCreateTaskGroup(t *testing.T) {
 func TestUpdateTaskGroup(t *testing.T) {
 	storage := NewMemoryTaskStorage()
 	taskGroup := NewTaskGroup("group2", "group2")
-	storage.SaveTaskGroup(taskGroup)
+	storage.SaveTaskGroup(taskGroup, true)
 
 	taskGroup.Name = "group2 edited"
-	storage.SaveTaskGroup(taskGroup)
+	storage.SaveTaskGroup(taskGroup, false)
 
 	found, err := storage.FindTaskGroup("group2")
 	if err != nil {
@@ -38,7 +38,7 @@ func TestUpdateTaskGroup(t *testing.T) {
 func TestDeleteTaskGroup(t *testing.T) {
 	storage := NewMemoryTaskStorage()
 	taskGroup := NewTaskGroup("group3", "group3")
-	storage.SaveTaskGroup(taskGroup)
+	storage.SaveTaskGroup(taskGroup, true)
 
 	storage.DeleteTaskGroup("group3")
 
@@ -54,7 +54,7 @@ func TestCreateTask(t *testing.T) {
 	task.Id = "task1"
 	task.Name = "task1"
 	task.Worker = "worker-a"
-	storage.SaveTask(task)
+	storage.SaveTask(task, true)
 
 	found, err := storage.FindTask("task1")
 	if err != nil {
@@ -71,10 +71,10 @@ func TestUpdateTask(t *testing.T) {
 	task.Id = "task2"
 	task.Name = "task2"
 	task.Worker = "worker-a"
-	storage.SaveTask(task)
+	storage.SaveTask(task, true)
 
 	task.Name = "task2 edited"
-	storage.SaveTask(task)
+	storage.SaveTask(task, false)
 
 	found, err := storage.FindTask("task2")
 	if err != nil {
@@ -91,7 +91,7 @@ func TestDeleteTask(t *testing.T) {
 	task.Id = "task3"
 	task.Name = "task3"
 	task.Worker = "worker-a"
-	storage.SaveTask(task)
+	storage.SaveTask(task, true)
 
 	storage.DeleteTask("task3")
 
@@ -108,15 +108,14 @@ func TestFindTasksByWorkgroup(t *testing.T) {
 	task4.Name = "task4"
 	task4.Worker = "worker-a"
 	task4.Workgroup = "group-a"
-
-	storage.SaveTask(task4)
+	storage.SaveTask(task4, true)
 
 	task5 := NewTask()
 	task5.Id = "task5"
 	task5.Name = "task5"
 	task5.Worker = "worker-a"
 	task5.Workgroup = "group-a"
-	storage.SaveTask(task5)
+	storage.SaveTask(task5, true)
 
 	found, _ := storage.GetTasksInWorkgroup("group-a")
 	if len(found) != 2 {
@@ -139,8 +138,7 @@ func TestFindTasksWithKey(t *testing.T) {
 	task6.Worker = "worker-a"
 	task6.Workgroup = "group-a"
 	task6.Key = "key-a"
-
-	storage.SaveTask(task6)
+	storage.SaveTask(task6, true)
 
 	task7 := NewTask()
 	task7.Id = "task7"
@@ -148,7 +146,7 @@ func TestFindTasksWithKey(t *testing.T) {
 	task7.Worker = "worker-a"
 	task7.Workgroup = "group-a"
 	task7.Key = "key-a"
-	storage.SaveTask(task7)
+	storage.SaveTask(task7, true)
 
 	found, _ := storage.GetTasksWithKey("key-a")
 	if len(found) != 2 {
@@ -169,21 +167,21 @@ func TestGetTaskChildrenAndParents(t *testing.T) {
 	task8.Id = "task8"
 	task8.Name = "task8"
 	task8.Worker = "worker-a"
-	storage.SaveTask(task8)
+	storage.SaveTask(task8, true)
 
 	task9 := NewTask()
 	task9.Id = "task9"
 	task9.Name = "task9"
 	task9.Worker = "worker-a"
 	task9.ParentIds = []string{"task8"}
-	storage.SaveTask(task9)
+	storage.SaveTask(task9, true)
 
 	task10 := NewTask()
 	task10.Id = "task10"
 	task10.Name = "task10"
 	task10.Worker = "worker-a"
 	task10.ParentIds = []string{"task8"}
-	storage.SaveTask(task10)
+	storage.SaveTask(task10, true)
 
 	task8Children, _ := storage.GetTaskChildren("task8")
 	if len(task8Children) != 2 {

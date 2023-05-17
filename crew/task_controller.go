@@ -1,6 +1,7 @@
 package crew
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -9,6 +10,7 @@ import (
 // TaskGroup represents a group of tasks.
 type TaskController struct {
 	Storage TaskStorage
+	Client  TaskClient
 	Feed    chan interface{}
 }
 
@@ -166,18 +168,30 @@ func (controller *TaskController) EmitTaskFeedEvent(event string, task *Task) {
 }
 
 func (controller *TaskController) TriggerTaskEvaluate(id string) (err error) {
-	// TODO
+	// We have two options here:
+	// 1) Just call evaluate in a goroutine (for a single host system)
+
+	// 2) Use an API call to trigger the evaluation (for a scalable system)
+
+	// Option 1:
+	go func() {
+		task, err := controller.Storage.FindTask(id)
+		if err == nil {
+			controller.Evaluate(task)
+		}
+	}()
+
 	return nil
 }
 
 func (controller *TaskController) CreateTaskGroup(taskGroup *TaskGroup) (err error) {
-	err = controller.Storage.SaveTaskGroup(taskGroup)
+	err = controller.Storage.SaveTaskGroup(taskGroup, true)
 	controller.EmitTaskGroupFeedEvent("create", taskGroup)
 	return err
 }
 
 func (controller *TaskController) CreateTask(task *Task) (err error) {
-	err = controller.Storage.SaveTask(task)
+	err = controller.Storage.SaveTask(task, true)
 	controller.EmitTaskFeedEvent("create", task)
 	controller.TriggerTaskEvaluate(task.Id)
 	return err
@@ -209,7 +223,7 @@ func (controller *TaskController) ResetTask(task *Task, remainingAttempts int) {
 	task.Output = nil
 	task.Errors = make([]string, 0)
 	task.RunAfter = time.Now()
-	controller.Storage.SaveTask(task)
+	controller.Storage.SaveTask(task, false)
 	controller.EmitTaskFeedEvent("update", task)
 	controller.TriggerTaskEvaluate(task.Id)
 }
@@ -243,7 +257,7 @@ func (controller *TaskController) RetryTaskGroup(id string, remainingAttempts in
 
 	for _, task := range allTasksInGroup {
 		task.RemainingAttempts = remainingAttempts
-		controller.Storage.SaveTask(task)
+		controller.Storage.SaveTask(task, false)
 		controller.EmitTaskFeedEvent("update", task)
 		controller.TriggerTaskEvaluate(task.Id)
 	}
@@ -255,7 +269,7 @@ func (controller *TaskController) PauseOrResumeTaskGroup(id string, isPaused boo
 
 	for _, task := range allTasksInGroup {
 		task.IsPaused = isPaused
-		controller.Storage.SaveTask(task)
+		controller.Storage.SaveTask(task, false)
 		controller.EmitTaskFeedEvent("update", task)
 		controller.TriggerTaskEvaluate(task.Id)
 	}
@@ -277,7 +291,7 @@ func (controller *TaskController) RetryTaskById(id string, remainingAttempts int
 		return nil, err
 	}
 	foundTask.RemainingAttempts = remainingAttempts
-	controller.Storage.SaveTask(foundTask)
+	controller.Storage.SaveTask(foundTask, false)
 	controller.EmitTaskFeedEvent("update", foundTask)
 	controller.TriggerTaskEvaluate(task.Id)
 	return task, nil
@@ -295,7 +309,7 @@ func (controller *TaskController) UpdateTaskGroup(id string, update map[string]i
 		foundTaskGroup.Name = newName
 	}
 
-	controller.Storage.SaveTaskGroup(foundTaskGroup)
+	controller.Storage.SaveTaskGroup(foundTaskGroup, false)
 	controller.EmitTaskGroupFeedEvent("update", foundTaskGroup)
 	return foundTaskGroup, nil
 }
@@ -404,7 +418,7 @@ func (controller *TaskController) UpdateTask(id string, update map[string]interf
 		task.IsSeed = newIsSeed
 	}
 
-	controller.Storage.SaveTask(task)
+	controller.Storage.SaveTask(task, false)
 	controller.EmitTaskFeedEvent("update", task)
 	// if shouldReIndex {
 
@@ -423,4 +437,209 @@ func (controller *TaskController) Startup() (err error) {
 func (controller *TaskController) Shutdown() (err error) {
 	// TODO
 	return nil
+}
+
+func (controller *TaskController) Evaluate(task *Task) {
+	fmt.Println("~~ Evaluating task", task.Id)
+	parents, _ := controller.Storage.GetTaskParents(task.Id)
+	canExecute := task.CanExecute(parents)
+	if canExecute {
+		controller.Execute(task)
+	}
+}
+
+func (controller *TaskController) Execute(taskToExecute *Task) {
+	fmt.Println("~~ Executing task", taskToExecute.Id)
+	parents, _ := controller.Storage.GetTaskParents(taskToExecute.Id)
+
+	lockError := controller.Storage.TryLockTask(taskToExecute.Id)
+	if lockError != nil {
+		// Couldn't lock task, do not execute
+		fmt.Println("~~ Executing task (lock fail)", taskToExecute.Id)
+		return
+	}
+
+	timer := time.NewTimer(1000 * time.Second)
+	timer.Stop()
+
+	go func() {
+		fmt.Println("~~ Executing task (go routine)", taskToExecute.Id)
+		// Unlock task no matter what else happens below!
+		defer controller.Storage.UnlockTask(taskToExecute.Id)
+
+		<-timer.C
+		// Make sure task hasn't been deleted
+		task, err := controller.Storage.FindTask(taskToExecute.Id)
+		if err != nil {
+			// Task was deleted while we were waiting for the timer.
+			// TODO - what if error was a db connection issue?
+			return
+		}
+
+		// If runAfter has not passed, it may have been updated while we were waiting for the timer.
+		// Do not execute, but re-evaluate
+		if task.RunAfter.After(time.Now()) {
+			controller.TriggerTaskEvaluate(task.Id)
+			return
+		}
+
+		canExecute := task.CanExecute(parents)
+		// Double check if task is still executable
+		if canExecute {
+
+			task.BusyExecuting = true
+			controller.Storage.SaveTask(task, false)
+			controller.EmitTaskFeedEvent("update", task)
+
+			// TODO - throttle
+
+			workerResponse, err := controller.Client.Post(task, parents)
+
+			// TODO - unthrottle
+
+			// post exec state updates
+			task.RemainingAttempts--
+			task.Output = workerResponse.Output
+			task.BusyExecuting = false
+
+			if err != nil {
+				fmt.Println("~~ Got standard error", err)
+				controller.HandleExecuteError(task, fmt.Sprintf("%v", err))
+			} else if workerResponse.Error != nil {
+				fmt.Println("~~ Got worker response error", workerResponse.Error)
+				controller.HandleExecuteError(task, fmt.Sprintf("%v", workerResponse.Error))
+			} else {
+				// No error!
+				task.IsComplete = true
+
+				// Create children
+				createdChildren := make([]*Task, 0)
+				var errorCreatingChildren error
+				for _, childTask := range workerResponse.Children {
+					child := NewTask()
+					child.Id = childTask.Id
+					child.Name = childTask.Name
+					child.Worker = childTask.Worker
+					child.Workgroup = childTask.Workgroup
+					child.Key = childTask.Key
+					child.RemainingAttempts = childTask.RemainingAttempts
+					child.IsPaused = childTask.IsPaused
+					child.IsComplete = childTask.IsComplete
+					child.RunAfter = childTask.RunAfter
+					child.ErrorDelayInSeconds = childTask.ErrorDelayInSeconds
+					child.Input = childTask.Input
+					child.ParentIds = childTask.ParentIds
+
+					// NOTE - current task is always added as a parent so that children won't begin exec until we are done creating them all
+					// This allows children to be created in any order.
+					child.ParentIds = append(child.ParentIds, task.Id)
+
+					// Save the new child
+					// Create children in a "transaction" so that if one fails to create, all get removed?
+					errorCreatingChildren := controller.Storage.SaveTask(child, true)
+					if errorCreatingChildren != nil {
+						break
+					}
+					createdChildren = append(createdChildren, child)
+				}
+
+				if errorCreatingChildren != nil {
+					// A child failed to create, delete all created children
+					for _, child := range createdChildren {
+						controller.Storage.DeleteTask(child.Id)
+					}
+
+					// Because children failed we have to fail the task so that users will know something went wrong.
+					task.IsComplete = false
+					fmt.Println("~~ Got child creation error", errorCreatingChildren)
+					controller.HandleExecuteError(task, fmt.Sprintf("Child create failure : %v", errorCreatingChildren))
+				} else {
+					for _, child := range createdChildren {
+						controller.EmitTaskFeedEvent("create", child)
+					}
+				}
+			}
+
+			// Apply child delays
+			// Note that child delays are done here instead of above because task may have a mix of pre-populated children and children created from its output.
+			if workerResponse.ChildrenDelayInSeconds > 0 {
+				allChildren, getChildrenError := controller.Storage.GetTaskChildren(task.Id)
+				if getChildrenError != nil {
+					for _, child := range allChildren {
+						child.RunAfter = time.Now().Add(time.Duration(workerResponse.ChildrenDelayInSeconds * int(time.Second)))
+						controller.Storage.SaveTask(child, false)
+						controller.EmitTaskFeedEvent("update", child)
+						// No evaluate sent here, is sent below if parent complete
+					}
+				}
+				// else {
+				// 	// TODO What should we do here? (failed to fetch children)
+				// }
+			}
+
+			// TODO - apply workgroup delays
+			if workerResponse.WorkgroupDelayInSeconds > 0 {
+				workgroupTasks, workgroupTasksError := controller.Storage.GetTasksInWorkgroup(task.Workgroup)
+				if workgroupTasksError != nil {
+					for _, workgroupTask := range workgroupTasks {
+						workgroupTask.RunAfter = time.Now().Add(time.Duration(workerResponse.WorkgroupDelayInSeconds * int(time.Second)))
+						controller.Storage.SaveTask(workgroupTask, false)
+						controller.EmitTaskFeedEvent("update", workgroupTask)
+						// No evaluate sent here, is sent below if parent complete
+					}
+				}
+			}
+
+			controller.Storage.SaveTask(task, false)
+			controller.EmitTaskFeedEvent("update", task)
+
+			if !task.IsComplete {
+				controller.TriggerTaskEvaluate(task.Id)
+			} else {
+				// Notify children that parent is complete (via an evaluate)
+				allChildren, getChildrenError := controller.Storage.GetTaskChildren(task.Id)
+				if getChildrenError != nil {
+					for _, child := range allChildren {
+						controller.TriggerTaskEvaluate(child.Id)
+					}
+				}
+
+				// Apply de-duplication (and notify the children of duplicates!)
+				keyMatches, keyMatchesError := controller.Storage.GetTasksWithKey(task.Key)
+				if (keyMatchesError == nil) && (len(keyMatches) > 1) {
+					for _, keyMatch := range keyMatches {
+						if keyMatch.Id != task.Id {
+							keyMatch.IsComplete = true
+							keyMatch.Output = task.Output
+							controller.Storage.SaveTask(keyMatch, false)
+							controller.EmitTaskFeedEvent("update", keyMatch)
+
+							// Notify children that parent is complete (via an evaluate)
+							keyMatchChildren, keyMatchChildrenError := controller.Storage.GetTaskChildren(keyMatch.Id)
+							if keyMatchChildrenError != nil {
+								for _, child := range keyMatchChildren {
+									controller.TriggerTaskEvaluate(child.Id)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}()
+
+	now := time.Now()
+	if now.Before(taskToExecute.RunAfter) {
+		// Task's run after has not passed
+		timer.Reset(taskToExecute.RunAfter.Sub(now))
+	} else {
+		// Task's run after has already passed or was not set
+		timer.Reset(time.Millisecond)
+	}
+}
+
+func (controller *TaskController) HandleExecuteError(task *Task, message string) {
+	task.Errors = append(task.Errors, message)
+	errorDelay := time.Duration(task.ErrorDelayInSeconds * int(time.Second))
+	task.RunAfter = time.Now().Add(errorDelay)
 }

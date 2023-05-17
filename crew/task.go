@@ -49,3 +49,29 @@ func NewTask() *Task {
 	}
 	return &task
 }
+
+// CanExecute determines if a Task is in a state where it can be executed.
+func (task *Task) CanExecute(parents []*Task) bool {
+	// Task should not execute if
+	// - it is already complete
+	// - it is paused
+	// - it has no remaining attempts
+	// - its task group is paused
+	// Note that we do not check runAfter here, task timing is handled by operator
+	if task.IsComplete || task.IsPaused || task.RemainingAttempts <= 0 {
+		return false
+	}
+
+	if task.Worker == "" {
+		return false
+	}
+
+	// Task should not execute if any of its parents are incomplete
+	for _, parent := range parents {
+		if !parent.IsComplete {
+			return false
+		}
+	}
+
+	return true
+}

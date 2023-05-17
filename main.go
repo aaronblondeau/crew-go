@@ -32,9 +32,11 @@ var embededFiles embed.FS
 
 func main() {
 	storage := crew.NewMemoryTaskStorage()
+	client := crew.NewHttpPostClient()
 	controller := &crew.TaskController{
 		Storage: storage,
 		Feed:    make(chan interface{}, 8),
+		Client:  client,
 	}
 	startupError := controller.Startup()
 	if startupError != nil {

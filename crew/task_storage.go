@@ -8,19 +8,22 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
+	"golang.org/x/sync/semaphore"
 )
 
 // TaskStorage defines the methods required for implementing crew's task storage interface.
 type TaskStorage interface {
-	SaveTask(task *Task) (err error)
+	SaveTask(task *Task, create bool) (err error)
 	FindTask(taskId string) (task *Task, err error)
+	TryLockTask(taskId string) (err error)
+	UnlockTask(taskId string)
 	DeleteTask(taskId string) (err error)
 	GetTaskChildren(taskId string) (tasks []*Task, err error)
 	GetTaskParents(taskId string) (tasks []*Task, err error)
 	GetTasksInWorkgroup(workgroup string) (tasks []*Task, err error)
 	GetTasksWithKey(key string) (tasks []*Task, err error)
 
-	SaveTaskGroup(taskGroup *TaskGroup) (err error)
+	SaveTaskGroup(taskGroup *TaskGroup, create bool) (err error)
 	AllTaskGroups() (taskGroups []*TaskGroup)
 	AllTasksInGroup(taskGroupId string) (tasks []*Task)
 	FindTaskGroup(taskGroupId string) (taskGroup *TaskGroup, err error)
@@ -29,12 +32,18 @@ type TaskStorage interface {
 
 // MemoryTaskStorage is a task storage that only stores state in memory.
 type MemoryTaskStorage struct {
-	taskGroups    map[string]*TaskGroup
-	tasks         map[string]*Task
-	idxWorkgroups map[string][]*Task
-	idxKeys       map[string][]*Task
-	idxGroups     map[string][]*Task
-	Mutex         sync.RWMutex
+	taskGroups         map[string]*TaskGroup
+	taskGroupsMutex    sync.RWMutex
+	tasks              map[string]*Task
+	tasksMutex         sync.RWMutex
+	taskLocks          map[string]*semaphore.Weighted
+	taskLocksMutex     sync.RWMutex
+	idxWorkgroups      map[string][]*Task
+	idxWorkgroupsMutex sync.RWMutex
+	idxKeys            map[string][]*Task
+	idxKeysMutex       sync.RWMutex
+	idxGroups          map[string][]*Task
+	idxGroupsMutex     sync.RWMutex
 }
 
 // NewMemoryTaskStorage creates a new MemoryTaskStorage.
@@ -42,6 +51,7 @@ func NewMemoryTaskStorage() *MemoryTaskStorage {
 	storage := MemoryTaskStorage{
 		taskGroups:    make(map[string]*TaskGroup),
 		tasks:         make(map[string]*Task),
+		taskLocks:     make(map[string]*semaphore.Weighted),
 		idxWorkgroups: make(map[string][]*Task),
 		idxKeys:       make(map[string][]*Task),
 		idxGroups:     make(map[string][]*Task),
@@ -50,15 +60,26 @@ func NewMemoryTaskStorage() *MemoryTaskStorage {
 }
 
 // SaveTask saves a task.
-func (storage *MemoryTaskStorage) SaveTask(task *Task) (err error) {
-	storage.Mutex.Lock()
-	defer storage.Mutex.Unlock()
+func (storage *MemoryTaskStorage) SaveTask(task *Task, create bool) (err error) {
+	// We need several locks for this!
+	storage.tasksMutex.Lock()
+	defer storage.tasksMutex.Unlock()
+	storage.idxWorkgroupsMutex.Lock()
+	defer storage.idxWorkgroupsMutex.Unlock()
+	storage.idxKeysMutex.Lock()
+	defer storage.idxKeysMutex.Unlock()
+	storage.idxGroupsMutex.Lock()
+	defer storage.idxGroupsMutex.Unlock()
+	storage.taskLocksMutex.Lock()
+	defer storage.taskLocksMutex.Unlock()
+
 	if task.Id == "" {
 		task.Id = uuid.New().String()
 	}
 	_, exists := storage.tasks[task.Id]
-	if !exists {
+	if !exists && create {
 		storage.tasks[task.Id] = task
+		storage.taskLocks[task.Id] = semaphore.NewWeighted(1)
 
 		// Add to indexes
 		if _, idxWorkgroupsExists := storage.idxWorkgroups[task.Workgroup]; !idxWorkgroupsExists {
@@ -82,8 +103,8 @@ func (storage *MemoryTaskStorage) SaveTask(task *Task) (err error) {
 
 // FindTask finds a task by task group id and task id.
 func (storage *MemoryTaskStorage) FindTask(taskId string) (task *Task, err error) {
-	storage.Mutex.RLock()
-	defer storage.Mutex.RUnlock()
+	storage.tasksMutex.RLock()
+	defer storage.tasksMutex.RUnlock()
 	task, found := storage.tasks[taskId]
 	if !found {
 		return nil, errors.New("task not found")
@@ -91,10 +112,41 @@ func (storage *MemoryTaskStorage) FindTask(taskId string) (task *Task, err error
 	return task, nil
 }
 
+func (storage *MemoryTaskStorage) TryLockTask(taskId string) (err error) {
+	storage.taskLocksMutex.RLock()
+	defer storage.taskLocksMutex.RUnlock()
+	lock, found := storage.taskLocks[taskId]
+	if !found {
+		return errors.New("task not found")
+	}
+	if !lock.TryAcquire(1) {
+		return errors.New("task is locked")
+	}
+	return nil
+}
+
+func (storage *MemoryTaskStorage) UnlockTask(taskId string) {
+	storage.taskLocksMutex.RLock()
+	defer storage.taskLocksMutex.RUnlock()
+	lock, found := storage.taskLocks[taskId]
+	if found {
+		lock.Release(1)
+	}
+}
+
 // Delete task deletes a task by task id.
 func (storage *MemoryTaskStorage) DeleteTask(taskId string) (err error) {
-	storage.Mutex.Lock()
-	defer storage.Mutex.Unlock()
+	// We need several locks for this!
+	storage.tasksMutex.Lock()
+	defer storage.tasksMutex.Unlock()
+	storage.idxWorkgroupsMutex.Lock()
+	defer storage.idxWorkgroupsMutex.Unlock()
+	storage.idxKeysMutex.Lock()
+	defer storage.idxKeysMutex.Unlock()
+	storage.idxGroupsMutex.Lock()
+	defer storage.idxGroupsMutex.Unlock()
+	storage.taskLocksMutex.Lock()
+	defer storage.taskLocksMutex.Unlock()
 
 	task, found := storage.tasks[taskId]
 	if found {
@@ -145,19 +197,22 @@ func (storage *MemoryTaskStorage) DeleteTask(taskId string) (err error) {
 
 		// Remove from tasks
 		delete(storage.tasks, taskId)
+
+		// Remove semaphore
+		defer delete(storage.taskLocks, taskId)
 	}
 	return nil
 }
 
 // SaveTaskGroup doesn't do anything for memory storage.
-func (storage *MemoryTaskStorage) SaveTaskGroup(taskGroup *TaskGroup) (err error) {
-	storage.Mutex.Lock()
-	defer storage.Mutex.Unlock()
+func (storage *MemoryTaskStorage) SaveTaskGroup(taskGroup *TaskGroup, create bool) (err error) {
+	storage.taskGroupsMutex.Lock()
+	defer storage.taskGroupsMutex.Unlock()
 	if taskGroup.Id == "" {
 		taskGroup.Id = uuid.New().String()
 	}
 	_, exists := storage.taskGroups[taskGroup.Id]
-	if !exists {
+	if !exists && create {
 		storage.taskGroups[taskGroup.Id] = taskGroup
 	}
 	return nil
@@ -165,8 +220,8 @@ func (storage *MemoryTaskStorage) SaveTaskGroup(taskGroup *TaskGroup) (err error
 
 // FindTaskGroup finds a task group by task group id.
 func (storage *MemoryTaskStorage) FindTaskGroup(taskGroupId string) (taskGroup *TaskGroup, err error) {
-	storage.Mutex.RLock()
-	defer storage.Mutex.RUnlock()
+	storage.taskGroupsMutex.RLock()
+	defer storage.taskGroupsMutex.RUnlock()
 	taskGroup, found := storage.taskGroups[taskGroupId]
 	if !found {
 		return nil, errors.New("task group not found")
@@ -176,8 +231,8 @@ func (storage *MemoryTaskStorage) FindTaskGroup(taskGroupId string) (taskGroup *
 
 // All TaskGroups returns all task groups.
 func (storage *MemoryTaskStorage) AllTaskGroups() (taskGroups []*TaskGroup) {
-	storage.Mutex.RLock()
-	defer storage.Mutex.RUnlock()
+	storage.taskGroupsMutex.RLock()
+	defer storage.taskGroupsMutex.RUnlock()
 	for _, taskGroup := range storage.taskGroups {
 		taskGroups = append(taskGroups, taskGroup)
 	}
@@ -186,22 +241,20 @@ func (storage *MemoryTaskStorage) AllTaskGroups() (taskGroups []*TaskGroup) {
 
 // All TaskGroups returns all task groups.
 func (storage *MemoryTaskStorage) AllTasksInGroup(taskGroupId string) (tasks []*Task) {
-	storage.Mutex.RLock()
-	defer storage.Mutex.RUnlock()
+	storage.idxGroupsMutex.RLock()
+	defer storage.idxGroupsMutex.RUnlock()
 	tasks = make([]*Task, 0)
 	groupTasks, groupTasksFound := storage.idxGroups[taskGroupId]
 	if groupTasksFound {
-		for _, task := range groupTasks {
-			tasks = append(tasks, task)
-		}
+		tasks = append(tasks, groupTasks...)
 	}
 	return tasks
 }
 
 // GetTaskChildren returns the children of a task.
 func (storage *MemoryTaskStorage) GetTaskChildren(taskId string) (tasks []*Task, err error) {
-	storage.Mutex.RLock()
-	defer storage.Mutex.RUnlock()
+	storage.tasksMutex.RLock()
+	defer storage.tasksMutex.RUnlock()
 
 	children := make([]*Task, 0)
 	for _, task := range storage.tasks {
@@ -216,8 +269,7 @@ func (storage *MemoryTaskStorage) GetTaskChildren(taskId string) (tasks []*Task,
 
 // GetTaskParents returns the parents of a task.
 func (storage *MemoryTaskStorage) GetTaskParents(taskId string) (tasks []*Task, err error) {
-	storage.Mutex.RLock()
-	defer storage.Mutex.RUnlock()
+	// Find calls to do locks!
 
 	parents := make([]*Task, 0)
 	task, findError := storage.FindTask(taskId)
@@ -236,8 +288,8 @@ func (storage *MemoryTaskStorage) GetTaskParents(taskId string) (tasks []*Task, 
 }
 
 func (storage *MemoryTaskStorage) GetTasksInWorkgroup(workgroup string) (tasks []*Task, err error) {
-	storage.Mutex.RLock()
-	defer storage.Mutex.RUnlock()
+	storage.idxWorkgroupsMutex.RLock()
+	defer storage.idxWorkgroupsMutex.RUnlock()
 
 	tasks = make([]*Task, 0)
 	idxWorkgroup, idxWorkgroupFound := storage.idxWorkgroups[workgroup]
@@ -248,8 +300,8 @@ func (storage *MemoryTaskStorage) GetTasksInWorkgroup(workgroup string) (tasks [
 }
 
 func (storage *MemoryTaskStorage) GetTasksWithKey(key string) (tasks []*Task, err error) {
-	storage.Mutex.RLock()
-	defer storage.Mutex.RUnlock()
+	storage.idxKeysMutex.RLock()
+	defer storage.idxKeysMutex.RUnlock()
 
 	tasks = make([]*Task, 0)
 	idxKey, idxKeyFound := storage.idxKeys[key]
@@ -262,13 +314,13 @@ func (storage *MemoryTaskStorage) GetTasksWithKey(key string) (tasks []*Task, er
 // DeleteTaskGroup deletes a task group by task group id.
 func (storage *MemoryTaskStorage) DeleteTaskGroup(taskGroupId string) (err error) {
 	// Get all tasks in the group (in own lock)
-	storage.Mutex.RLock()
+	storage.idxGroupsMutex.RLock()
 	tasks := make([]*Task, 0)
 	groupTasks, groupTasksFound := storage.idxGroups[taskGroupId]
 	if groupTasksFound {
 		tasks = groupTasks
 	}
-	storage.Mutex.RUnlock()
+	storage.idxGroupsMutex.RUnlock()
 
 	// Delete all tasks in the group
 	for _, task := range tasks {
@@ -276,8 +328,10 @@ func (storage *MemoryTaskStorage) DeleteTaskGroup(taskGroupId string) (err error
 	}
 
 	// Delete the task group
-	storage.Mutex.Lock()
-	defer storage.Mutex.Unlock()
+	storage.taskGroupsMutex.Lock()
+	defer storage.taskGroupsMutex.Unlock()
+	storage.idxGroupsMutex.Lock()
+	defer storage.idxGroupsMutex.Unlock()
 
 	delete(storage.taskGroups, taskGroupId)
 	delete(storage.idxGroups, taskGroupId)
