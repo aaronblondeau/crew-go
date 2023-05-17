@@ -232,7 +232,12 @@ async function loadTasks () {
         task.retryWait = false
       }
       tasks.value = result.tasks
-      router.push({ query: { ...route.query, q: search.value, page: paginationModel.value.page, page_size: paginationModel.value.rowsPerPage } })
+      setTimeout(() => {
+        if (paginationModel.value) {
+          // Delay updating the query so that parent components can make their changes first (tab=task/settings, etc...)
+          router.push({ query: { ...route.query, q: search.value, page: paginationModel.value.page, page_size: paginationModel.value.rowsPerPage } })
+        }
+      }, 500)
     }
   } catch (e) {
     notifyError(e)
