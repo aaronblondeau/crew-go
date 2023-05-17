@@ -19,7 +19,6 @@ type ChildTask struct {
 	Key                 string      `json:"key"`
 	RemainingAttempts   int         `json:"remainingAttempts"`
 	IsPaused            bool        `json:"isPaused"`
-	IsComplete          bool        `json:"isComplete"`
 	RunAfter            time.Time   `json:"runAfter"`
 	ErrorDelayInSeconds int         `json:"errorDelayInSeconds"`
 	Input               interface{} `json:"input"`

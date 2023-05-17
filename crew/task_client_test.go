@@ -203,7 +203,7 @@ func TestChildrenResponse(t *testing.T) {
 			t.Errorf("Expected Accept: application/json header, got: %s", r.Header.Get("Accept"))
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"childrenDelayInSeconds":12,"children":[{"id":"T20C1","name":"Child1","worker":"testx"},{"id":"T20C2","name":"Child2","worker":"testx"}]}`))
+		w.Write([]byte(`{"childrenDelayInSeconds":12,"children":[{"id":"task17","name":"Child1","worker":"testx"},{"id":"T20C2","name":"Child2","worker":"testx"}]}`))
 	}))
 	defer server.Close()
 
@@ -229,7 +229,7 @@ func TestChildrenResponse(t *testing.T) {
 	if response.ChildrenDelayInSeconds != 12 {
 		t.Fatalf(`response.ChildrenDelayInSeconds = %v, want %v`, response.ChildrenDelayInSeconds, 12)
 	}
-	if response.Children[0].Id != "T20C1" {
-		t.Fatalf(`response.Children[0].Id = %v, want %v`, response.Children[0].Id, "T20C1")
+	if response.Children[0].Id != "task17" {
+		t.Fatalf(`response.Children[0].Id = %v, want %v`, response.Children[0].Id, "task17")
 	}
 }

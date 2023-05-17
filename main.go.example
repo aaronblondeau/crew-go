@@ -32,11 +32,35 @@ var embededFiles embed.FS
 
 func main() {
 	storage := crew.NewMemoryTaskStorage()
+	// storage := crew.NewRedisTaskStorage("localhost:6379", "", 0)
 	client := crew.NewHttpPostClient()
+
+	throttlePush := make(chan crew.ThrottlePushQuery, 8)
+	throttlePop := make(chan crew.ThrottlePopQuery, 8)
+	throttler := &crew.Throttler{
+		Push: throttlePush,
+		Pop:  throttlePop,
+	}
+
+	// No throttling
+	go func() {
+		for {
+			select {
+			case pushQuery := <-throttlePush:
+				// Default behavior = immediate response => no throttling
+				fmt.Println("~~ Would throttle", pushQuery.Worker, pushQuery.TaskId)
+				pushQuery.Resp <- true
+			case popQuery := <-throttlePop:
+				fmt.Println("~~ Would unthrottle", popQuery.Worker, popQuery.TaskId)
+			}
+		}
+	}()
+
 	controller := &crew.TaskController{
-		Storage: storage,
-		Feed:    make(chan interface{}, 8),
-		Client:  client,
+		Storage:   storage,
+		Feed:      make(chan interface{}, 8),
+		Client:    client,
+		Throttler: throttler,
 	}
 	startupError := controller.Startup()
 	if startupError != nil {

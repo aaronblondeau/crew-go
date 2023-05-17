@@ -332,6 +332,7 @@ watch(
 watch(
   () => tab.value,
   (newTab) => {
+    console.log('~~ dbg newTab', newTab)
     router.push({ query: { tab: newTab } })
   }
 )

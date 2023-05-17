@@ -127,7 +127,10 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, embededFiles e
 	}, authMiddleware)
 	e.GET("/api/v1/task_group/:task_group_id/progress", func(c echo.Context) error {
 		taskGroupId := c.Param("task_group_id")
-		completedPercent := controller.GetTaskGroupProgress(taskGroupId)
+		completedPercent, err := controller.GetTaskGroupProgress(taskGroupId)
+		if err != nil {
+			return c.String(http.StatusInternalServerError, err.Error())
+		}
 		return c.JSON(http.StatusOK, map[string]interface{}{
 			"completedPercent": completedPercent,
 		})

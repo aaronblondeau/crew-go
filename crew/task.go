@@ -1,6 +1,8 @@
 package crew
 
-import "time"
+import (
+	"time"
+)
 
 // A Task represents a unit of work that can be completed by a worker.
 type Task struct {

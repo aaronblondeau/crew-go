@@ -16,7 +16,7 @@ type TaskStorage interface {
 	SaveTask(task *Task, create bool) (err error)
 	FindTask(taskId string) (task *Task, err error)
 	TryLockTask(taskId string) (err error)
-	UnlockTask(taskId string)
+	UnlockTask(taskId string) (err error)
 	DeleteTask(taskId string) (err error)
 	GetTaskChildren(taskId string) (tasks []*Task, err error)
 	GetTaskParents(taskId string) (tasks []*Task, err error)
@@ -24,8 +24,8 @@ type TaskStorage interface {
 	GetTasksWithKey(key string) (tasks []*Task, err error)
 
 	SaveTaskGroup(taskGroup *TaskGroup, create bool) (err error)
-	AllTaskGroups() (taskGroups []*TaskGroup)
-	AllTasksInGroup(taskGroupId string) (tasks []*Task)
+	AllTaskGroups() (taskGroups []*TaskGroup, err error)
+	AllTasksInGroup(taskGroupId string) (tasks []*Task, err error)
 	FindTaskGroup(taskGroupId string) (taskGroup *TaskGroup, err error)
 	DeleteTaskGroup(taskGroupId string) (err error)
 }
@@ -125,13 +125,14 @@ func (storage *MemoryTaskStorage) TryLockTask(taskId string) (err error) {
 	return nil
 }
 
-func (storage *MemoryTaskStorage) UnlockTask(taskId string) {
+func (storage *MemoryTaskStorage) UnlockTask(taskId string) (err error) {
 	storage.taskLocksMutex.RLock()
 	defer storage.taskLocksMutex.RUnlock()
 	lock, found := storage.taskLocks[taskId]
 	if found {
 		lock.Release(1)
 	}
+	return nil
 }
 
 // Delete task deletes a task by task id.
@@ -230,17 +231,17 @@ func (storage *MemoryTaskStorage) FindTaskGroup(taskGroupId string) (taskGroup *
 }
 
 // All TaskGroups returns all task groups.
-func (storage *MemoryTaskStorage) AllTaskGroups() (taskGroups []*TaskGroup) {
+func (storage *MemoryTaskStorage) AllTaskGroups() (taskGroups []*TaskGroup, err error) {
 	storage.taskGroupsMutex.RLock()
 	defer storage.taskGroupsMutex.RUnlock()
 	for _, taskGroup := range storage.taskGroups {
 		taskGroups = append(taskGroups, taskGroup)
 	}
-	return taskGroups
+	return taskGroups, nil
 }
 
-// All TaskGroups returns all task groups.
-func (storage *MemoryTaskStorage) AllTasksInGroup(taskGroupId string) (tasks []*Task) {
+// All AllTasksInGroup returns all tasks within a group.
+func (storage *MemoryTaskStorage) AllTasksInGroup(taskGroupId string) (tasks []*Task, err error) {
 	storage.idxGroupsMutex.RLock()
 	defer storage.idxGroupsMutex.RUnlock()
 	tasks = make([]*Task, 0)
@@ -248,7 +249,7 @@ func (storage *MemoryTaskStorage) AllTasksInGroup(taskGroupId string) (tasks []*
 	if groupTasksFound {
 		tasks = append(tasks, groupTasks...)
 	}
-	return tasks
+	return tasks, nil
 }
 
 // GetTaskChildren returns the children of a task.

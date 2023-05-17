@@ -7,11 +7,30 @@ import (
 	"time"
 )
 
+// A ThrottlePushQuery is a request to the throttler to see if there is enough bandwidth for a worker to run.
+type ThrottlePushQuery struct {
+	TaskId string
+	Worker string
+	Resp   chan bool
+}
+
+// ThrottlePopQuery is a request to the throttler to notify that a worker is done.
+type ThrottlePopQuery struct {
+	TaskId string
+	Worker string
+}
+
+type Throttler struct {
+	Push chan ThrottlePushQuery
+	Pop  chan ThrottlePopQuery
+}
+
 // TaskGroup represents a group of tasks.
 type TaskController struct {
-	Storage TaskStorage
-	Client  TaskClient
-	Feed    chan interface{}
+	Storage   TaskStorage
+	Client    TaskClient
+	Feed      chan interface{}
+	Throttler *Throttler
 }
 
 type TaskFeedEvent struct {
@@ -28,7 +47,11 @@ func (controller *TaskController) GetTaskGroups(page int, pageSize int, search s
 
 	// create an all groups slice (while performing search)
 	groups := make([]*TaskGroup, 0)
-	for _, group := range controller.Storage.AllTaskGroups() {
+	allGroups, allTaskGroupsError := controller.Storage.AllTaskGroups()
+	if allTaskGroupsError != nil {
+		return nil, 0, allTaskGroupsError
+	}
+	for _, group := range allGroups {
 		if search != "" {
 			if strings.Contains(strings.ToLower(group.Name), strings.ToLower(search)) {
 				groups = append(groups, group)
@@ -74,7 +97,10 @@ func (controller *TaskController) GetTaskGroup(id string) (taskGroup *TaskGroup,
 
 func (controller *TaskController) GetTasksInGroup(taskGroupId string, page int, pageSize int, search string) (tasks []*Task, total int, err error) {
 
-	allTasksInGroup := controller.Storage.AllTasksInGroup(taskGroupId)
+	allTasksInGroup, allTasksInGroupError := controller.Storage.AllTasksInGroup(taskGroupId)
+	if allTasksInGroupError != nil {
+		return nil, 0, allTasksInGroupError
+	}
 
 	// create an all tasks slice
 	tasks = make([]*Task, 0)
@@ -118,8 +144,11 @@ func (controller *TaskController) GetTasksInGroup(taskGroupId string, page int, 
 	return sliced, slice_count, nil
 }
 
-func (controller *TaskController) GetTaskGroupProgress(id string) (completedPercent float64) {
-	allTasksInGroup := controller.Storage.AllTasksInGroup(id)
+func (controller *TaskController) GetTaskGroupProgress(id string) (completedPercent float64, err error) {
+	allTasksInGroup, allTasksInGroupError := controller.Storage.AllTasksInGroup(id)
+	if allTasksInGroupError != nil {
+		return 0.0, allTasksInGroupError
+	}
 	total := len(allTasksInGroup)
 	completed := 0
 	// Iterate all tasks
@@ -133,7 +162,7 @@ func (controller *TaskController) GetTaskGroupProgress(id string) (completedPerc
 	if total > 0 {
 		completedPercent = float64(completed) / float64(total)
 	}
-	return completedPercent
+	return completedPercent, nil
 }
 
 func (controller *TaskController) GetTask(id string) (task *Task, err error) {
@@ -229,7 +258,10 @@ func (controller *TaskController) ResetTask(task *Task, remainingAttempts int) {
 }
 
 func (controller *TaskController) ResetTaskGroup(id string, remainingAttempts int) (err error) {
-	allTasksInGroup := controller.Storage.AllTasksInGroup(id)
+	allTasksInGroup, allTasksInGroupError := controller.Storage.AllTasksInGroup(id)
+	if allTasksInGroupError != nil {
+		return allTasksInGroupError
+	}
 
 	hasSeedTasks := false
 	for _, task := range allTasksInGroup {
@@ -253,7 +285,10 @@ func (controller *TaskController) ResetTaskGroup(id string, remainingAttempts in
 }
 
 func (controller *TaskController) RetryTaskGroup(id string, remainingAttempts int) (err error) {
-	allTasksInGroup := controller.Storage.AllTasksInGroup(id)
+	allTasksInGroup, allTasksInGroupError := controller.Storage.AllTasksInGroup(id)
+	if allTasksInGroupError != nil {
+		return allTasksInGroupError
+	}
 
 	for _, task := range allTasksInGroup {
 		task.RemainingAttempts = remainingAttempts
@@ -265,7 +300,10 @@ func (controller *TaskController) RetryTaskGroup(id string, remainingAttempts in
 }
 
 func (controller *TaskController) PauseOrResumeTaskGroup(id string, isPaused bool) (err error) {
-	allTasksInGroup := controller.Storage.AllTasksInGroup(id)
+	allTasksInGroup, allTasksInGroupError := controller.Storage.AllTasksInGroup(id)
+	if allTasksInGroupError != nil {
+		return allTasksInGroupError
+	}
 
 	for _, task := range allTasksInGroup {
 		task.IsPaused = isPaused
@@ -440,8 +478,8 @@ func (controller *TaskController) Shutdown() (err error) {
 }
 
 func (controller *TaskController) Evaluate(task *Task) {
-	fmt.Println("~~ Evaluating task", task.Id)
 	parents, _ := controller.Storage.GetTaskParents(task.Id)
+	fmt.Println("~~ Evaluating task", task.Id, len(parents))
 	canExecute := task.CanExecute(parents)
 	if canExecute {
 		controller.Execute(task)
@@ -491,11 +529,27 @@ func (controller *TaskController) Execute(taskToExecute *Task) {
 			controller.Storage.SaveTask(task, false)
 			controller.EmitTaskFeedEvent("update", task)
 
-			// TODO - throttle
+			// Apply worker throttling if a throttler is defined
+			throttler := controller.Throttler
+			if (throttler != nil) && (task.Worker != "") {
+				query := ThrottlePushQuery{
+					TaskId: task.Id,
+					Worker: task.Worker,
+					Resp:   make(chan bool)}
+				throttler.Push <- query
+				// Block until throttler says it is ok to send task request
+				<-query.Resp
+			}
 
 			workerResponse, err := controller.Client.Post(task, parents)
 
-			// TODO - unthrottle
+			if (throttler != nil) && (task.Worker != "") {
+				query := ThrottlePopQuery{
+					TaskId: task.Id,
+					Worker: task.Worker}
+				// Let throttler know that task attempt is complete
+				throttler.Pop <- query
+			}
 
 			// post exec state updates
 			task.RemainingAttempts--
@@ -518,13 +572,17 @@ func (controller *TaskController) Execute(taskToExecute *Task) {
 				for _, childTask := range workerResponse.Children {
 					child := NewTask()
 					child.Id = childTask.Id
+					child.TaskGroupId = task.TaskGroupId
 					child.Name = childTask.Name
 					child.Worker = childTask.Worker
 					child.Workgroup = childTask.Workgroup
 					child.Key = childTask.Key
 					child.RemainingAttempts = childTask.RemainingAttempts
+					if child.RemainingAttempts == 0 {
+						child.RemainingAttempts = 5
+					}
 					child.IsPaused = childTask.IsPaused
-					child.IsComplete = childTask.IsComplete
+					child.IsComplete = false
 					child.RunAfter = childTask.RunAfter
 					child.ErrorDelayInSeconds = childTask.ErrorDelayInSeconds
 					child.Input = childTask.Input
@@ -598,27 +656,29 @@ func (controller *TaskController) Execute(taskToExecute *Task) {
 			} else {
 				// Notify children that parent is complete (via an evaluate)
 				allChildren, getChildrenError := controller.Storage.GetTaskChildren(task.Id)
-				if getChildrenError != nil {
+				if getChildrenError == nil {
 					for _, child := range allChildren {
 						controller.TriggerTaskEvaluate(child.Id)
 					}
 				}
 
 				// Apply de-duplication (and notify the children of duplicates!)
-				keyMatches, keyMatchesError := controller.Storage.GetTasksWithKey(task.Key)
-				if (keyMatchesError == nil) && (len(keyMatches) > 1) {
-					for _, keyMatch := range keyMatches {
-						if keyMatch.Id != task.Id {
-							keyMatch.IsComplete = true
-							keyMatch.Output = task.Output
-							controller.Storage.SaveTask(keyMatch, false)
-							controller.EmitTaskFeedEvent("update", keyMatch)
+				if task.Key != "" {
+					keyMatches, keyMatchesError := controller.Storage.GetTasksWithKey(task.Key)
+					if (keyMatchesError == nil) && (len(keyMatches) > 1) {
+						for _, keyMatch := range keyMatches {
+							if keyMatch.Id != task.Id {
+								keyMatch.IsComplete = true
+								keyMatch.Output = task.Output
+								controller.Storage.SaveTask(keyMatch, false)
+								controller.EmitTaskFeedEvent("update", keyMatch)
 
-							// Notify children that parent is complete (via an evaluate)
-							keyMatchChildren, keyMatchChildrenError := controller.Storage.GetTaskChildren(keyMatch.Id)
-							if keyMatchChildrenError != nil {
-								for _, child := range keyMatchChildren {
-									controller.TriggerTaskEvaluate(child.Id)
+								// Notify children that parent is complete (via an evaluate)
+								keyMatchChildren, keyMatchChildrenError := controller.Storage.GetTaskChildren(keyMatch.Id)
+								if keyMatchChildrenError != nil {
+									for _, child := range keyMatchChildren {
+										controller.TriggerTaskEvaluate(child.Id)
+									}
 								}
 							}
 						}
