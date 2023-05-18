@@ -11,9 +11,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
-	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -40,11 +38,10 @@ func getFileSystem(useOS bool, embededFiles embed.FS) http.FileSystem {
 
 // ServeRestApi starts the REST API server.
 // wg: A waitgroup that the server can use to signal when it is done.
-// taskGroupController: The root task group controller to use to manage all tasks and task groups.
-// taskClient: The client to use to execute tasks.
+// controller: The root task controller to use to manage all tasks and task groups.
 // authMiddleware: The echo middleware function that will be used to authenticate API calls.
 // loginFunc: The function that will be used to handle login requests.
-func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, taskClient TaskClient, embededFiles embed.FS, authMiddleware echo.MiddlewareFunc, loginFunc func(c echo.Context) error) *http.Server {
+func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, embededFiles embed.FS, authMiddleware echo.MiddlewareFunc, loginFunc func(c echo.Context) error) *http.Server {
 	e := echo.New()
 	e.Use(middleware.CORS())
 
@@ -63,11 +60,11 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 				page = qpage
 			}
 		}
-		page_size := 20
+		pageSize := 20
 		if c.QueryParams().Has("pageSize") {
-			qpage_size, err := strconv.Atoi(c.QueryParam("pageSize"))
+			qPageSize, err := strconv.Atoi(c.QueryParam("pageSize"))
 			if err == nil {
-				page_size = qpage_size
+				pageSize = qPageSize
 			}
 		}
 		search := ""
@@ -75,55 +72,22 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			search = c.QueryParam("search")
 		}
 
-		// create an all groups slice (while performing search)
-		groups := make([]*TaskGroup, 0)
-		for _, group := range taskGroupController.TaskGroups {
-			if search != "" {
-				if strings.Contains(strings.ToLower(group.Name), strings.ToLower(search)) {
-					groups = append(groups, group)
-				}
-			} else {
-				groups = append(groups, group)
-			}
-		}
+		taskGroups, total, err := controller.GetTaskGroups(page, pageSize, search)
 
-		// sort all groups slice
-		sort.Slice(groups, func(a, b int) bool {
-			return groups[a].CreatedAt.Before(groups[b].CreatedAt)
-		})
-
-		if page_size == 0 {
-			page_size = len(groups)
+		if err != nil {
+			return c.String(http.StatusInternalServerError, err.Error())
 		}
-
-		// pagninate groups slice
-		slice_start := (page - 1) * page_size
-		slice_end := slice_start + page_size
-		slice_count := len(groups)
-		if slice_start < 0 {
-			slice_start = 0
-		}
-		if slice_end < slice_start {
-			slice_end = slice_start
-		}
-		if slice_start > slice_count {
-			slice_start = slice_count
-		}
-		if slice_end > slice_count {
-			slice_end = slice_count
-		}
-		sliced := groups[slice_start:slice_end]
 
 		return c.JSON(http.StatusOK, map[string]interface{}{
-			"taskGroups": sliced,
-			"count":      slice_count,
+			"taskGroups": taskGroups,
+			"count":      total,
 		})
 	}, authMiddleware)
 	e.GET("/api/v1/task_group/:id", func(c echo.Context) error {
 		taskGroupId := c.Param("id")
-		group, found := taskGroupController.TaskGroups[taskGroupId]
-		if !found {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
+		group, err := controller.GetTaskGroup(taskGroupId)
+		if err != nil {
+			return c.String(http.StatusInternalServerError, err.Error())
 		}
 		return c.JSON(http.StatusOK, group)
 	}, authMiddleware)
@@ -135,186 +99,96 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 				page = qpage
 			}
 		}
-		page_size := 20
+		pageSize := 20
 		if c.QueryParams().Has("pageSize") {
-			qpage_size, err := strconv.Atoi(c.QueryParam("pageSize"))
+			qPageSize, err := strconv.Atoi(c.QueryParam("pageSize"))
 			if err == nil {
-				page_size = qpage_size
+				pageSize = qPageSize
 			}
 		}
 
 		taskGroupId := c.Param("task_group_id")
-		group, found := taskGroupController.TaskGroups[taskGroupId]
-		if !found {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
-		}
 
 		search := ""
 		if c.QueryParams().Has("search") {
 			search = c.QueryParam("search")
 		}
 
-		// create an all tasks slice
-		tasks := make([]*Task, 0)
-		group.OperatorsMutex.RLock()
-		defer group.OperatorsMutex.RUnlock()
-		for _, operator := range group.TaskOperators {
-			if search != "" {
-				if strings.Contains(strings.ToLower(operator.Task.Name), strings.ToLower(search)) {
-					tasks = append(tasks, operator.Task)
-				}
-			} else {
-				tasks = append(tasks, operator.Task)
-			}
+		skipCompleted := false
+		if c.QueryParams().Has("skipCompleted") {
+			skipCompleted, _ = strconv.ParseBool(c.QueryParam("skipCompleted"))
 		}
 
-		// sort all tasks slice
-		sort.Slice(tasks, func(a, b int) bool {
-			return tasks[a].CreatedAt.Before(tasks[b].CreatedAt)
-		})
+		tasks, total, err := controller.GetTasksInGroup(taskGroupId, page, pageSize, search, skipCompleted)
 
-		if page_size == 0 {
-			page_size = len(tasks)
+		if err != nil {
+			return c.String(http.StatusInternalServerError, err.Error())
 		}
-
-		// pagninate tasks slice
-		slice_start := (page - 1) * page_size
-		slice_end := slice_start + page_size
-		slice_count := len(tasks)
-		if slice_start < 0 {
-			slice_start = 0
-		}
-		if slice_end < slice_start {
-			slice_end = slice_start
-		}
-		if slice_start > slice_count {
-			slice_start = slice_count
-		}
-		if slice_end > slice_count {
-			slice_end = slice_count
-		}
-		sliced := tasks[slice_start:slice_end]
 
 		return c.JSON(http.StatusOK, map[string]interface{}{
-			"tasks": sliced,
-			"count": slice_count,
+			"tasks": tasks,
+			"count": total,
 		})
 	}, authMiddleware)
 	e.GET("/api/v1/task_group/:task_group_id/progress", func(c echo.Context) error {
 		taskGroupId := c.Param("task_group_id")
-		group, found := taskGroupController.TaskGroups[taskGroupId]
-		if !found {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
-		}
-
-		group.OperatorsMutex.RLock()
-		defer group.OperatorsMutex.RUnlock()
-		total := len(group.TaskOperators)
-		completed := 0
-		// Iterate all tasks
-		for _, operator := range group.TaskOperators {
-			if operator.Task.IsComplete {
-				completed++
-			}
-		}
-
-		completedPercent := 0.0
-		if total > 0 {
-			completedPercent = float64(completed) / float64(total)
+		completedPercent, err := controller.GetTaskGroupProgress(taskGroupId)
+		if err != nil {
+			return c.String(http.StatusInternalServerError, err.Error())
 		}
 		return c.JSON(http.StatusOK, map[string]interface{}{
 			"completedPercent": completedPercent,
 		})
 	}, authMiddleware)
 	e.GET("/api/v1/task_group/:task_group_id/task/:task_id", func(c echo.Context) error {
-		taskGroupId := c.Param("task_group_id")
-		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
-		if !groupFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
-		}
 		taskId := c.Param("task_id")
-		group.OperatorsMutex.RLock()
-		defer group.OperatorsMutex.RUnlock()
-		operator, taskFound := group.TaskOperators[taskId]
-		if !taskFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task with id %v not found in group %v.", taskId, taskGroupId))
+		task, err := controller.GetTask(taskId)
+		if err != nil {
+			return c.String(http.StatusInternalServerError, err.Error())
 		}
-		return c.JSON(http.StatusOK, operator.Task)
+		return c.JSON(http.StatusOK, task)
+	}, authMiddleware)
+	e.GET("/api/v1/task/:task_id", func(c echo.Context) error {
+		taskId := c.Param("task_id")
+		task, err := controller.GetTask(taskId)
+		if err != nil {
+			return c.String(http.StatusInternalServerError, err.Error())
+		}
+		return c.JSON(http.StatusOK, task)
 	}, authMiddleware)
 	e.POST("/api/v1/task_groups", func(c echo.Context) error {
 		// Create a task group
-		group := NewTaskGroup("", "", taskGroupController)
+		group := NewTaskGroup("", "")
 		inflate_err := json.NewDecoder(c.Request().Body).Decode(&group)
 		if inflate_err != nil {
 			return c.String(http.StatusBadRequest, inflate_err.Error())
 		}
-		if group.Id == "" {
-			group.Id = uuid.New().String()
-		}
-		group_add_err := taskGroupController.AddGroup(group)
-		if group_add_err != nil {
-			return c.String(http.StatusBadRequest, group_add_err.Error())
+		err := controller.CreateTaskGroup(group)
+		if err != nil {
+			return c.String(http.StatusInternalServerError, err.Error())
 		}
 		return c.JSON(http.StatusOK, group)
 	}, authMiddleware)
 	e.POST("/api/v1/task_group/:task_group_id/tasks", func(c echo.Context) error {
 		// Create a task
-		taskGroupId := c.Param("task_group_id")
-		group, found := taskGroupController.TaskGroups[taskGroupId]
-		if !found {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
-		}
-
-		task := Task{}
+		task := NewTask()
 		inflate_err := json.NewDecoder(c.Request().Body).Decode(&task)
+		task.TaskGroupId = c.Param("task_group_id")
 		if inflate_err != nil {
 			return c.String(http.StatusBadRequest, inflate_err.Error())
 		}
-		if task.Id == "" {
-			task.Id = uuid.New().String()
-		}
-		if task.RemainingAttempts == 0 {
-			task.RemainingAttempts = 5
-		}
-		if task.ErrorDelayInSeconds == 0 {
-			task.ErrorDelayInSeconds = 30
-		}
-		task.CreatedAt = time.Now()
-		task.TaskGroupId = group.Id
-
-		group.OperatorsMutex.RLock()
-		shouldUnlock := true
-		// If parent ids are present validate that all parents exist
-		if len(task.ParentIds) > 0 {
-			for _, parentId := range task.ParentIds {
-				_, found = group.TaskOperators[parentId]
-				if !found {
-					group.OperatorsMutex.RUnlock()
-					shouldUnlock = false
-					return c.String(http.StatusBadRequest, fmt.Sprintf("Parent %s does not exist", parentId))
-				}
-			}
-		}
-		if shouldUnlock {
-			group.OperatorsMutex.RUnlock()
-		}
-
-		err := group.AddTask(&task, taskClient)
+		err := controller.CreateTask(task)
 		if err != nil {
-			return c.String(http.StatusBadRequest, err.Error())
+			return c.String(http.StatusInternalServerError, err.Error())
 		}
 		return c.JSON(http.StatusOK, task)
 	}, authMiddleware)
 	e.DELETE("/api/v1/task_group/:task_group_id", func(c echo.Context) error {
 		// Delete a task group
 		taskGroupId := c.Param("task_group_id")
-		_, groupFound := taskGroupController.TaskGroups[taskGroupId]
-		if !groupFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
-		}
-		err := taskGroupController.RemoveGroup(taskGroupId)
+		err := controller.DeleteTaskGroup(taskGroupId)
 		if err != nil {
-			return c.String(http.StatusBadRequest, err.Error())
+			return c.String(http.StatusInternalServerError, err.Error())
 		}
 		return c.JSON(http.StatusOK, map[string]interface{}{
 			"id":      taskGroupId,
@@ -323,16 +197,10 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 	}, authMiddleware)
 	e.DELETE("/api/v1/task_group/:task_group_id/task/:task_id", func(c echo.Context) error {
 		// Delete a task
-		taskGroupId := c.Param("task_group_id")
-		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
-		if !groupFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
-		}
-
 		taskId := c.Param("task_id")
-		err := group.DeleteTask(taskId)
+		err := controller.DeleteTask(taskId)
 		if err != nil {
-			return c.String(http.StatusBadRequest, err.Error())
+			return c.String(http.StatusInternalServerError, err.Error())
 		}
 		return c.JSON(http.StatusOK, map[string]interface{}{
 			"id":      taskId,
@@ -342,10 +210,6 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 	e.POST("/api/v1/task_group/:task_group_id/reset", func(c echo.Context) error {
 		// Reset a task group.  If the group has seed tasks, all non-seed tasks are removed.  Then all remaining tasks within the group are reset.
 		taskGroupId := c.Param("task_group_id")
-		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
-		if !groupFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
-		}
 
 		remainingAttempts := 5
 		body := make(map[string]interface{})
@@ -357,19 +221,18 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			}
 		}
 
-		resetErr := group.Reset(remainingAttempts, nil)
-		if resetErr != nil {
-			return c.String(http.StatusBadRequest, resetErr.Error())
+		err := controller.ResetTaskGroup(taskGroupId, remainingAttempts)
+		if err != nil {
+			return c.String(http.StatusInternalServerError, err.Error())
 		}
-		return c.JSON(http.StatusOK, group)
+
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"success": true,
+		})
 	}, authMiddleware)
 	e.POST("/api/v1/task_group/:task_group_id/retry", func(c echo.Context) error {
 		// Force a retry of all incomplete tasks in a task group by incrementing their remainingAttempts value.
 		taskGroupId := c.Param("task_group_id")
-		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
-		if !groupFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
-		}
 
 		remainingAttempts := 5
 		body := make(map[string]interface{})
@@ -381,58 +244,39 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			}
 		}
 
-		err := group.RetryAllTasks(remainingAttempts)
+		err := controller.RetryTaskGroup(taskGroupId, remainingAttempts)
 		if err != nil {
-			return c.String(http.StatusBadRequest, err.Error())
-		}
-		return c.JSON(http.StatusOK, group)
-	}, authMiddleware)
-	e.POST("/api/v1/task_group/:task_group_id/pause", func(c echo.Context) error {
-		// Pause all tasks in group, fan-in updates?
-		taskGroupId := c.Param("task_group_id")
-		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
-		if !groupFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
+			return c.String(http.StatusInternalServerError, err.Error())
 		}
 
-		err := group.PauseAllTasks()
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"success": true,
+		})
+	}, authMiddleware)
+	e.POST("/api/v1/task_group/:task_group_id/pause", func(c echo.Context) error {
+		taskGroupId := c.Param("task_group_id")
+		err := controller.PauseOrResumeTaskGroup(taskGroupId, true)
 		if err != nil {
-			return c.String(http.StatusBadRequest, err.Error())
+			return c.String(http.StatusInternalServerError, err.Error())
 		}
-		return c.JSON(http.StatusOK, group)
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"success": true,
+		})
 	}, authMiddleware)
 	e.POST("/api/v1/task_group/:task_group_id/resume", func(c echo.Context) error {
 		// Resume all tasks in group, fan-in updates?
 		taskGroupId := c.Param("task_group_id")
-		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
-		if !groupFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
-		}
-
-		err := group.UnPauseAllTasks()
+		err := controller.PauseOrResumeTaskGroup(taskGroupId, false)
 		if err != nil {
-			return c.String(http.StatusBadRequest, err.Error())
+			return c.String(http.StatusInternalServerError, err.Error())
 		}
-		return c.JSON(http.StatusOK, group)
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"success": true,
+		})
 	}, authMiddleware)
 	e.POST("/api/v1/task_group/:task_group_id/task/:task_id/reset", func(c echo.Context) error {
 		// Reset a task as if it had never been run.  Reject if BusyExecuting.
-		taskGroupId := c.Param("task_group_id")
-		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
-		if !groupFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
-		}
-
 		taskId := c.Param("task_id")
-		group.OperatorsMutex.RLock()
-		operator, taskFound := group.TaskOperators[taskId]
-		group.OperatorsMutex.RUnlock()
-		if !taskFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task with id %v not found in group %v.", taskId, taskGroupId))
-		}
-		if operator.Task.BusyExecuting {
-			return c.String(http.StatusConflict, "Task is busy executing, cannot update.")
-		}
 
 		remainingAttempts := 5
 		body := make(map[string]interface{})
@@ -444,32 +288,16 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			}
 		}
 
-		updateComplete := make(chan error)
-		operator.ResetTask(remainingAttempts, updateComplete)
-		updateError := <-updateComplete
-		if updateError != nil {
-			return c.String(http.StatusBadRequest, updateError.Error())
+		task, err := controller.ResetTaskById(taskId, remainingAttempts)
+		if err != nil {
+			return c.String(http.StatusInternalServerError, err.Error())
 		}
-		return c.JSON(http.StatusOK, operator.Task)
+
+		return c.JSON(http.StatusOK, task)
 	}, authMiddleware)
 	e.POST("/api/v1/task_group/:task_group_id/task/:task_id/retry", func(c echo.Context) error {
 		// Force a retry of a task by updating its remainingAttempts value.
-		taskGroupId := c.Param("task_group_id")
-		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
-		if !groupFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
-		}
-
 		taskId := c.Param("task_id")
-		group.OperatorsMutex.RLock()
-		operator, taskFound := group.TaskOperators[taskId]
-		group.OperatorsMutex.RUnlock()
-		if !taskFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task with id %v not found in group %v.", taskId, taskGroupId))
-		}
-		if operator.Task.BusyExecuting {
-			return c.String(http.StatusConflict, "Task is busy executing, cannot update.")
-		}
 
 		remainingAttempts := 5
 		body := make(map[string]interface{})
@@ -481,53 +309,34 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			}
 		}
 
-		updateComplete := make(chan error)
-		operator.ExternalUpdates <- TaskUpdate{
-			Update:         map[string]interface{}{"remainingAttempts": remainingAttempts},
-			UpdateComplete: updateComplete,
-		}
-		updateError := <-updateComplete
-		if updateError != nil {
-			return c.String(http.StatusBadRequest, updateError.Error())
+		task, err := controller.RetryTaskById(taskId, remainingAttempts)
+		if err != nil {
+			return c.String(http.StatusInternalServerError, err.Error())
 		}
 
-		return c.JSON(http.StatusOK, operator.Task)
+		return c.JSON(http.StatusOK, task)
 	}, authMiddleware)
 	e.PUT("/api/v1/task_group/:task_group_id", func(c echo.Context) error {
 		// Update a task group
 		taskGroupId := c.Param("task_group_id")
-		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
-		if !groupFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
-		}
+
 		update := make(map[string]interface{})
 		parseErr := json.NewDecoder(c.Request().Body).Decode(&update)
 		if parseErr != nil {
 			return c.String(http.StatusBadRequest, parseErr.Error())
 		}
-		updateErr := taskGroupController.UpdateGroup(group, update)
-		if updateErr != nil {
-			return c.String(http.StatusBadRequest, updateErr.Error())
+
+		taskGroup, err := controller.UpdateTaskGroup(taskGroupId, update)
+		if err != nil {
+			return c.String(http.StatusInternalServerError, err.Error())
 		}
-		return c.JSON(http.StatusOK, group)
+
+		return c.JSON(http.StatusOK, taskGroup)
 	}, authMiddleware)
 	e.PUT("/api/v1/task_group/:task_group_id/task/:task_id", func(c echo.Context) error {
 		// Update a task. Do not update and throw error if Task.BusyExecuting!
-		taskGroupId := c.Param("task_group_id")
-		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
-		if !groupFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
-		}
 		taskId := c.Param("task_id")
-		group.OperatorsMutex.RLock()
-		operator, taskFound := group.TaskOperators[taskId]
-		group.OperatorsMutex.RUnlock()
-		if !taskFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task with id %v not found in group %v.", taskId, taskGroupId))
-		}
-		if operator.Task.BusyExecuting {
-			return c.String(http.StatusConflict, "Task is busy executing, cannot update.")
-		}
+
 		update := make(map[string]interface{})
 		parseErr := json.NewDecoder(c.Request().Body).Decode(&update)
 		if parseErr != nil {
@@ -548,48 +357,12 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			}
 		}
 
-		// If parent ids are present validate that all parents exist
-		newParentIds, hasParentIds := update["parentIds"]
-		if hasParentIds {
-			switch t := newParentIds.(type) {
-			case []interface{}:
-				if len(t) == 0 {
-					update["parentIds"] = make([]string, 0)
-				} else {
-					for _, parentIdCandidate := range t {
-						parentId, ok := parentIdCandidate.(string)
-						if ok {
-							// Make sure parent id exists (and isn't self)
-							group.OperatorsMutex.RLock()
-							_, parentFound := group.TaskOperators[parentId]
-							group.OperatorsMutex.RUnlock()
-							if !parentFound {
-								return c.String(http.StatusBadRequest, fmt.Sprintf("Parent %s does not exist", parentId))
-							}
-							if parentId == taskId {
-								return c.String(http.StatusBadRequest, "Task cannot be own parent")
-							}
-						}
-					}
-				}
-			default:
-				// Not expected input type for parentIds
-			}
+		task, err := controller.UpdateTask(taskId, update)
+		if err != nil {
+			return c.String(http.StatusInternalServerError, err.Error())
 		}
 
-		// Task updates happen in operator goroutine, use a channel to sync
-		// update before we send response
-		updateComplete := make(chan error)
-		operator.ExternalUpdates <- TaskUpdate{
-			Update:         update,
-			UpdateComplete: updateComplete,
-		}
-		updateError := <-updateComplete
-		if updateError != nil {
-			return c.String(http.StatusBadRequest, updateError.Error())
-		}
-
-		return c.JSON(http.StatusOK, operator.Task)
+		return c.JSON(http.StatusOK, task)
 	}, authMiddleware)
 
 	// Demo worker endpoints
@@ -713,36 +486,44 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 	// Watch for updates in the task group contoller and deliver them to listening websockets
 	watchers := make(map[string]TaskGroupWatcher, 0)
 	go func() {
-		for taskGroupUpdate := range taskGroupController.TaskGroupUpdates {
-			for _, watcher := range watchers {
-				if watcher.TaskGroupId == taskGroupUpdate.TaskGroup.Id {
-					evtJson, jsonErr := json.Marshal(taskGroupUpdate)
-					if jsonErr == nil && !inShutdown {
-						watcher.Channel <- string(evtJson)
+		for update := range controller.Feed {
+
+			switch v := update.(type) {
+			case TaskFeedEvent:
+				taskUpdate := update.(TaskFeedEvent)
+				for _, watcher := range watchers {
+					if watcher.TaskGroupId == taskUpdate.Task.TaskGroupId {
+						evtJson, jsonErr := json.Marshal(taskUpdate)
+						if jsonErr == nil && !inShutdown {
+							watcher.Channel <- string(evtJson)
+						}
 					}
 				}
-			}
-		}
-	}()
-	go func() {
-		for taskUpdate := range taskGroupController.TaskUpdates {
-			for _, watcher := range watchers {
-				if watcher.TaskGroupId == taskUpdate.Task.TaskGroupId {
-					evtJson, jsonErr := json.Marshal(taskUpdate)
-					if jsonErr == nil && !inShutdown {
-						watcher.Channel <- string(evtJson)
+			case TaskGroupFeedEvent:
+				taskGroupUpdate := update.(TaskGroupFeedEvent)
+				for _, watcher := range watchers {
+					if watcher.TaskGroupId == taskGroupUpdate.TaskGroup.Id {
+						evtJson, jsonErr := json.Marshal(taskGroupUpdate)
+						if jsonErr == nil && !inShutdown {
+							watcher.Channel <- string(evtJson)
+						}
 					}
 				}
+			default:
+				fmt.Printf("I don't know how to handle feed message of type %T!\n", v)
 			}
 		}
 	}()
 
 	e.GET("/api/v1/task_group/:task_group_id/stream/:token", func(c echo.Context) error {
 		taskGroupId := c.Param("task_group_id")
-		group, groupFound := taskGroupController.TaskGroups[taskGroupId]
-		if !groupFound {
-			return c.String(http.StatusNotFound, fmt.Sprintf("Task group with id %v not found.", taskGroupId))
+
+		// Make sure task group exists
+		_, err := controller.GetTaskGroup(taskGroupId)
+		if err != nil {
+			return c.String(404, err.Error())
 		}
+
 		requestId := uuid.New().String()
 
 		websocket.Handler(func(ws *websocket.Conn) {
@@ -751,7 +532,7 @@ func ServeRestApi(wg *sync.WaitGroup, taskGroupController *TaskGroupController, 
 			// Create a "watcher" to keep track of this websocket's request to watch a specific task group
 			sink := make(chan string)
 			watch := TaskGroupWatcher{
-				TaskGroupId: group.Id,
+				TaskGroupId: taskGroupId,
 				Channel:     sink,
 				RequestId:   requestId,
 				Socket:      ws,

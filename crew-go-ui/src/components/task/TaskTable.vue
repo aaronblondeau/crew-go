@@ -39,6 +39,9 @@
                 <q-btn round dense flat icon="search" @click="loadTasks" />
                 <q-btn round dense flat icon="clear" @click="clearSearch" />
                 <q-btn round dense flat icon="refresh" @click="loadTasks" />
+                <q-checkbox v-model="skipCompleted" size="sm">
+                  <span class="text-subtitle2">Hide Completed</span>
+                </q-checkbox>
               </template>
             </q-input>
           </div>
@@ -118,7 +121,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import toClipboard from 'src/lib/toClipboard'
 import { useRouter, useRoute } from 'vue-router'
 import _ from 'lodash'
@@ -155,6 +158,7 @@ const paginationModel = ref<QTableProps['pagination']>({
   rowsNumber: 0
 })
 const search = ref(router.currentRoute.value.query.q as string || '')
+const skipCompleted = ref(false)
 
 const columns : QTableProps['columns'] = [
   {
@@ -200,7 +204,7 @@ function onCreate (task: Task) {
   loadTasks()
 }
 
-function onUpdate (task: Task) {
+function onUpdate () { // task: Task) {
   loadTasks()
 }
 
@@ -223,7 +227,7 @@ async function loadTasks () {
   try {
     if (paginationModel.value) {
       loading.value = true
-      const result = await taskStore.getTasks(props.taskGroup.id, paginationModel.value.page, paginationModel.value.rowsPerPage, search.value)
+      const result = await taskStore.getTasks(props.taskGroup.id, paginationModel.value.page, paginationModel.value.rowsPerPage, search.value, skipCompleted.value)
       paginationModel.value.rowsNumber = result.count
       for (const task of result.tasks) {
         task.pauseWait = false
@@ -232,7 +236,12 @@ async function loadTasks () {
         task.retryWait = false
       }
       tasks.value = result.tasks
-      router.push({ query: { ...route.query, q: search.value, page: paginationModel.value.page, page_size: paginationModel.value.rowsPerPage } })
+      setTimeout(() => {
+        if (paginationModel.value) {
+          // Delay updating the query so that parent components can make their changes first (tab=task/settings, etc...)
+          router.push({ query: { ...route.query, q: search.value, page: paginationModel.value.page, page_size: paginationModel.value.rowsPerPage } })
+        }
+      }, 500)
     }
   } catch (e) {
     notifyError(e)
@@ -265,10 +274,12 @@ async function resumeTask (task: Task) {
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function onReset (evt: any, task: Task) {
   Object.assign(task, evt)
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function onRetry (evt: any, task: Task) {
   Object.assign(task, evt)
 }
@@ -315,4 +326,11 @@ defineExpose({
 onMounted(async () => {
   await loadTasks()
 })
+
+watch(
+  () => skipCompleted.value,
+  () => {
+    loadTasks()
+  }
+)
 </script>

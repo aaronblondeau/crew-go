@@ -1,806 +1,235 @@
 package crew
 
 import (
-	"fmt"
-	"sync"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
-	"time"
 )
 
-type PostInvocationCountClient struct {
-	PostInvocationCount int
-}
-
-func (client *PostInvocationCountClient) Post(task *Task, taskGroup *TaskGroup) (response WorkerResponse, err error) {
-	client.PostInvocationCount++
-	response = WorkerResponse{
-		Output: map[string]interface{}{
-			"test": "Hook Complete",
-		},
-		Children:                make([]*Task, 0),
-		Error:                   nil,
-		WorkgroupDelayInSeconds: 0,
-		ChildrenDelayInSeconds:  0,
-	}
-	return
-}
-
-type PostReturnsChildrenClient struct {
-	Children                []*Task
-	Output                  interface{}
-	WorkgroupDelayInSeconds int
-	ChildrenDelayInSeconds  int
-}
-
-func (client *PostReturnsChildrenClient) Post(task *Task, taskGroup *TaskGroup) (response WorkerResponse, err error) {
-	var children []*Task
-	if task.Name == "Parent" {
-		children = client.Children
-	} else {
-		children = make([]*Task, 0)
-	}
-	response = WorkerResponse{
-		Output:                  client.Output,
-		Children:                children,
-		Error:                   nil,
-		WorkgroupDelayInSeconds: client.WorkgroupDelayInSeconds,
-		ChildrenDelayInSeconds:  client.ChildrenDelayInSeconds,
-	}
-	return
-}
-
-type PostErrorClient struct {
-	ErrorMessage string
-	Output       interface{}
-}
-
-func (client *PostErrorClient) Post(task *Task, taskGroup *TaskGroup) (response WorkerResponse, err error) {
-	response = WorkerResponse{
-		Output:                  client.Output,
-		Children:                make([]*Task, 0),
-		Error:                   client.ErrorMessage,
-		WorkgroupDelayInSeconds: 0,
-		ChildrenDelayInSeconds:  0,
-	}
-	return
-}
-
-type FailOnceThenSucceedClient struct {
-	PostInvocationCount int
-	ErrorMessage        string
-	Output              interface{}
-}
-
-func (client *FailOnceThenSucceedClient) Post(task *Task, taskGroup *TaskGroup) (response WorkerResponse, err error) {
-	var workerError interface{}
-	if client.PostInvocationCount == 0 {
-		workerError = client.ErrorMessage
-	} else {
-		workerError = nil
-	}
-
-	client.PostInvocationCount++
-
-	response = WorkerResponse{
-		Output:                  client.Output,
-		Children:                make([]*Task, 0),
-		Error:                   workerError,
-		WorkgroupDelayInSeconds: 0,
-		ChildrenDelayInSeconds:  0,
-	}
-
-	return
-}
-
-func TestTaskInvokesClientPost(t *testing.T) {
-	task := Task{
-		Id:                "T1",
-		TaskGroupId:       "G1",
-		Name:              "Task One",
-		Worker:            "test",
-		Workgroup:         "",
-		Key:               "T1",
-		RemainingAttempts: 5,
-		// Start task as paused
-		IsPaused:   false,
-		IsComplete: false,
-		ParentIds:  []string{},
-	}
-	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage(), nil)
-	group := NewTaskGroup("G1", "Test", taskGroupController)
-
-	if len(group.TaskOperators) != 0 {
-		t.Errorf("len(group.TaskOperators) = %d; want 0", len(group.TaskOperators))
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		for event := range group.Controller.TaskUpdates {
-			// fmt.Println("Got an update!", event.Event, event.Task.IsComplete)
-			if event.Task.IsComplete {
-				wg.Done()
-				return
-			}
+func TestSuccessResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/test-worker" {
+			t.Errorf("Expected to request '/test-worker', got: %s", r.URL.Path)
 		}
-	}()
+		if r.Header.Get("Accept") != "application/json" {
+			t.Errorf("Expected Accept: application/json header, got: %s", r.Header.Get("Accept"))
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"output":"done!"}`))
+	}))
+	defer server.Close()
 
-	client := PostInvocationCountClient{}
-	group.PreloadTasks([]*Task{&task}, &client)
-	group.Operate()
-
-	// Wait for task to complete
-	wg.Wait()
-
-	if task.IsComplete != true {
-		t.Fatalf(`Task.IsComplete = %v, want true`, task.IsComplete)
+	client := NewHttpPostClient()
+	client.UrlForTask = func(task *Task) (url string, err error) {
+		return server.URL + "/test-worker", nil
 	}
-	if client.PostInvocationCount != 1 {
-		t.Fatalf(`client.PostInvocationCount = %v, want 1`, client.PostInvocationCount)
+
+	task := NewTask()
+	task.Id = "task11"
+	task.Name = "task11"
+	task.Worker = "worker-a"
+	parents := make([]*Task, 0)
+
+	response, postError := client.Post(task, parents)
+
+	if postError != nil {
+		t.Fatal("Recieved an unexpected response error", postError)
 	}
-	output := task.Output.(map[string]interface{})["test"]
-	if output != "Hook Complete" {
-		t.Fatalf(`task.Output["test"] = %v, want "Hook Complete"`, output)
+	if response.Output != `done!` {
+		t.Fatalf(`response.Output = %v, want %v`, response.Output, `done!`)
+	}
+	if len(response.Children) != 0 {
+		t.Fatalf(`len(response.Children) = %v, want %v`, len(response.Children), 0)
+	}
+	if response.WorkgroupDelayInSeconds != 0 {
+		t.Fatalf(`response.WorkgroupDelayInSeconds = %v, want %v`, response.WorkgroupDelayInSeconds, 0)
+	}
+	if response.ChildrenDelayInSeconds != 0 {
+		t.Fatalf(`response.ChildrenDelayInSeconds = %v, want %v`, response.ChildrenDelayInSeconds, 0)
+	}
+	if response.Error != nil {
+		t.Fatalf(`response.Error = %v, want nil`, response.Error)
 	}
 }
 
-func TestCaptureError(t *testing.T) {
-	task := Task{
-		Id:                "T2",
-		TaskGroupId:       "G2",
-		Name:              "Task Two",
-		Worker:            "test",
-		Workgroup:         "",
-		Key:               "T2",
-		RemainingAttempts: 1,
-		// Start task as paused
-		IsPaused:   false,
-		IsComplete: false,
-		ParentIds:  []string{},
-	}
-	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage(), nil)
-	group := NewTaskGroup("G2", "Test", taskGroupController)
-
-	if len(group.TaskOperators) != 0 {
-		t.Errorf("len(group.TaskOperators) = %d; want 0", len(group.TaskOperators))
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		for event := range group.Controller.TaskUpdates {
-			// fmt.Println("Got an update!", event.Event, event.Task.IsComplete)
-			if len(event.Task.Errors) > 0 {
-				wg.Done()
-				return
-			}
+func TestHttpErrorResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/test-worker" {
+			t.Errorf("Expected to request '/test-worker', got: %s", r.URL.Path)
 		}
-	}()
+		if r.Header.Get("Accept") != "application/json" {
+			t.Errorf("Expected Accept: application/json header, got: %s", r.Header.Get("Accept"))
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`I am confused...`))
+	}))
+	defer server.Close()
 
-	client := PostErrorClient{}
-	client.ErrorMessage = "Oops, I died"
-	group.PreloadTasks([]*Task{&task}, &client)
-	group.Operate()
-
-	// Wait for task to complete
-	wg.Wait()
-
-	if task.IsComplete != false {
-		t.Fatalf(`Task.IsComplete = %v, want false`, task.IsComplete)
+	client := NewHttpPostClient()
+	client.UrlForTask = func(task *Task) (url string, err error) {
+		return server.URL + "/test-worker", nil
 	}
-	err := fmt.Sprintf("%v", task.Errors[0])
-	if err != client.ErrorMessage {
-		t.Fatalf(`task.Errors[0] = %v, want %v`, err, client.ErrorMessage)
-	}
-	if task.RemainingAttempts != 0 {
-		t.Fatalf(`task.RemainingAttempts = %v, want 0`, task.RemainingAttempts)
+
+	task := NewTask()
+	task.Id = "task12"
+	task.Name = "task12"
+	task.Worker = "worker-a"
+	parents := make([]*Task, 0)
+
+	_, postError := client.Post(task, parents)
+
+	if postError == nil || postError.Error() != "I am confused..." {
+		t.Fatalf("Expected to receive error, but got %v", postError)
 	}
 }
 
-func TestErrorOnceThenSucceed(t *testing.T) {
-	task := Task{
-		Id:                "T3",
-		TaskGroupId:       "G3",
-		Name:              "Task Three",
-		Worker:            "test",
-		Workgroup:         "",
-		Key:               "T3",
-		RemainingAttempts: 2,
-		// Start task as paused
-		IsPaused:            false,
-		IsComplete:          false,
-		ParentIds:           []string{},
-		ErrorDelayInSeconds: 1.0,
-	}
-	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage(), nil)
-	group := NewTaskGroup("G3", "Test", taskGroupController)
-
-	if len(group.TaskOperators) != 0 {
-		t.Errorf("len(group.TaskOperators) = %d; want 0", len(group.TaskOperators))
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		for event := range group.Controller.TaskUpdates {
-			// fmt.Println("Got an update!", event.Event, event.Task.IsComplete)
-			if event.Task.IsComplete {
-				wg.Done()
-				return
-			}
+func TestErrorResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/test-worker" {
+			t.Errorf("Expected to request '/test-worker', got: %s", r.URL.Path)
 		}
-	}()
+		if r.Header.Get("Accept") != "application/json" {
+			t.Errorf("Expected Accept: application/json header, got: %s", r.Header.Get("Accept"))
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"error":"oops!","workgroupDelayInSeconds":11}`))
+	}))
+	defer server.Close()
 
-	client := FailOnceThenSucceedClient{}
-	client.ErrorMessage = "Oops, I goofed"
-	group.PreloadTasks([]*Task{&task}, &client)
-	group.Operate()
-
-	// Wait for task to complete
-	wg.Wait()
-
-	err := fmt.Sprintf("%v", task.Errors[0])
-	if task.IsComplete != true {
-		t.Fatalf(`Task.IsComplete = %v, want true`, task.IsComplete)
+	client := NewHttpPostClient()
+	client.UrlForTask = func(task *Task) (url string, err error) {
+		return server.URL + "/test-worker", nil
 	}
-	if err != client.ErrorMessage {
-		t.Fatalf(`task.Errors[0] = %v, want %v`, err, client.ErrorMessage)
+
+	task := NewTask()
+	task.Id = "task13"
+	task.Name = "task13"
+	task.Worker = "worker-a"
+	parents := make([]*Task, 0)
+
+	response, postError := client.Post(task, parents)
+
+	if postError != nil {
+		t.Fatal("Recieved an unexpected response error", postError)
 	}
-	if task.RemainingAttempts != 0 {
-		t.Fatalf(`task.RemainingAttempts = %v, want 0`, task.RemainingAttempts)
+	if response.Output != nil {
+		t.Fatalf(`response.Output = %v, want nil`, response.Output)
+	}
+	if response.WorkgroupDelayInSeconds != 11 {
+		t.Fatalf(`response.WorkgroupDelayInSeconds = %v, want %v`, response.WorkgroupDelayInSeconds, 11)
+	}
+	if response.Error != "oops!" {
+		t.Fatalf(`response.Error = %v, want %v`, response.Error, "oops!")
 	}
 }
 
-func TestSingleChildOutput(t *testing.T) {
-	parent := Task{
-		Id:                "T4P",
-		TaskGroupId:       "G4",
-		Name:              "Parent",
-		Worker:            "test",
-		Workgroup:         "",
-		Key:               "T4P",
-		RemainingAttempts: 2,
-		// Start task as paused
-		IsPaused:   false,
-		IsComplete: false,
-		ParentIds:  []string{},
-	}
-
-	child := Task{
-		Id:                "T4C",
-		TaskGroupId:       "G4",
-		Name:              "Child",
-		Worker:            "test",
-		Workgroup:         "",
-		Key:               "T4C",
-		RemainingAttempts: 2,
-		// Start task as paused
-		IsPaused:   false,
-		IsComplete: false,
-		ParentIds:  []string{},
-	}
-	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage(), nil)
-	group := NewTaskGroup("G4", "Test", taskGroupController)
-
-	if len(group.TaskOperators) != 0 {
-		t.Errorf("len(group.TaskOperators) = %d; want 0", len(group.TaskOperators))
-	}
-
-	var wgParent sync.WaitGroup
-	wgParent.Add(1)
-	var wgChild sync.WaitGroup
-	wgChild.Add(1)
-	go func() {
-		for event := range group.Controller.TaskUpdates {
-			// fmt.Println("Got an update!", event.Event, event.Task.Id, event.Task.IsComplete)
-			if event.Task.Id == parent.Id {
-				if event.Task.IsComplete {
-					wgParent.Done()
-				}
-			}
-			if event.Task.Id == child.Id {
-				if event.Task.IsComplete {
-					wgChild.Done()
-					return
-				}
-			}
+func TestParentDataInPayload(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/test-worker" {
+			t.Errorf("Expected to request '/test-worker', got: %s", r.URL.Path)
 		}
-	}()
+		if r.Header.Get("Accept") != "application/json" {
+			t.Errorf("Expected Accept: application/json header, got: %s", r.Header.Get("Accept"))
+		}
 
-	client := PostReturnsChildrenClient{}
-	client.Output = map[string]interface{}{
-		"children": "How they grow...",
-	}
-	client.Children = []*Task{&child}
-	group.PreloadTasks([]*Task{&parent}, &client)
-	group.Operate()
+		defer r.Body.Close()
+		bodyBytes, bodyErr := io.ReadAll(r.Body)
+		if bodyErr != nil {
+			t.Error("Failed to parse request body", bodyErr)
+		}
 
-	// Wait for task to complete
-	wgParent.Wait()
-	if parent.IsComplete != true {
-		t.Fatalf(`parent.IsComplete = %v, want true`, parent.IsComplete)
-	}
-	if len(parent.Children) != 1 {
-		t.Fatalf(`len(parent.Children) = %v, want 1`, len(parent.Children))
+		// Should have a parseable payload
+		payload := WorkerPayload{}
+		json.Unmarshal(bodyBytes, &payload)
+
+		if payload.TaskId != "task15" {
+			t.Fatalf(`payload.TaskId = %v, want %v`, payload.TaskId, "task15")
+		}
+		if payload.Worker != "worker-a" {
+			t.Fatalf(`payload.Worker = %v, want %v`, payload.Worker, "worker-a")
+		}
+		if len(payload.Parents) != 1 {
+			t.Fatalf(`len(payload.Parents) = %v, want %v`, len(payload.Parents), 1)
+		}
+		if payload.Parents[0].TaskId != "task14" {
+			t.Fatalf(`payload.Parents[0].TaskId = %v, want %v`, payload.Parents[0].TaskId, "task14")
+		}
+		parentInput := payload.Parents[0].Input.(map[string]interface{})
+		if parentInput["in"] != float64(42) {
+			t.Fatalf(`parentInput["in"] = %v, want %v`, parentInput["in"], 42)
+		}
+
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"output":"done!"}`))
+	}))
+	defer server.Close()
+
+	client := NewHttpPostClient()
+	client.UrlForTask = func(task *Task) (url string, err error) {
+		return server.URL + "/test-worker", nil
 	}
 
-	// Wait for child to complete
-	wgChild.Wait()
-	if child.IsComplete != true {
-		t.Fatalf(`child.IsComplete = %v, want true`, child.IsComplete)
+	task := NewTask()
+	task.Id = "task14"
+	task.Name = "task14"
+	task.Worker = "worker-a"
+	task.IsComplete = true
+	task.Input = map[string]int{"in": 42}
+	task.Output = map[string]int{"foo": 1, "bar": 2}
+
+	child := NewTask()
+	child.Id = "task15"
+	child.Name = "task15"
+	child.Worker = "worker-a"
+	child.ParentIds = []string{"task14"}
+
+	parents := make([]*Task, 0)
+	parents = append(parents, task)
+
+	_, postError := client.Post(child, parents)
+	if postError != nil {
+		t.Fatal("Recieved an unexpected response error", postError)
 	}
 }
 
-func TestMultipleChildOutput(t *testing.T) {
-	parent := Task{
-		Id:                "T5P",
-		TaskGroupId:       "G5",
-		Name:              "Parent",
-		Worker:            "test",
-		Workgroup:         "",
-		Key:               "T5P",
-		RemainingAttempts: 2,
-		// Start task as paused
-		IsPaused:   false,
-		IsComplete: false,
-		ParentIds:  []string{},
-	}
-
-	child1 := Task{
-		Id:                "T5C1",
-		TaskGroupId:       "G5",
-		Name:              "Child",
-		Worker:            "test",
-		Workgroup:         "",
-		Key:               "T5C1",
-		RemainingAttempts: 2,
-		// Start task as paused
-		IsPaused:   false,
-		IsComplete: false,
-		ParentIds:  []string{},
-	}
-
-	child2A := Task{
-		Id:                "T5C2A",
-		TaskGroupId:       "G5",
-		Name:              "Child",
-		Worker:            "test",
-		Workgroup:         "",
-		Key:               "T5C2A",
-		RemainingAttempts: 2,
-		// Start task as paused
-		IsPaused:   false,
-		IsComplete: false,
-		ParentIds:  []string{"T5C1"},
-	}
-
-	child2B := Task{
-		Id:                "T5C2B",
-		TaskGroupId:       "G5",
-		Name:              "Child",
-		Worker:            "test",
-		Workgroup:         "",
-		Key:               "T5C2B",
-		RemainingAttempts: 2,
-		// Start task as paused
-		IsPaused:   false,
-		IsComplete: false,
-		ParentIds:  []string{"T5C1"},
-	}
-
-	child3 := Task{
-		Id:                "T5C3",
-		TaskGroupId:       "G5",
-		Name:              "Child",
-		Worker:            "test",
-		Workgroup:         "",
-		Key:               "T5C3",
-		RemainingAttempts: 2,
-		// Start task as paused
-		IsPaused:   false,
-		IsComplete: false,
-		ParentIds:  []string{"T5C2A", "T5C2B"},
-	}
-	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage(), nil)
-	group := NewTaskGroup("G5", "Test", taskGroupController)
-
-	if len(group.TaskOperators) != 0 {
-		t.Errorf("len(group.TaskOperators) = %d; want 0", len(group.TaskOperators))
-	}
-
-	var wgParent sync.WaitGroup
-	wgParent.Add(1)
-	var wgChildren sync.WaitGroup
-	wgChildren.Add(4)
-	childCompletionOrder := []string{}
-	go func() {
-		for event := range group.Controller.TaskUpdates {
-			// fmt.Println("Got an update!", event.Event, event.Task.Id, event.Task.IsComplete)
-			if event.Task.Id == parent.Id {
-				if event.Task.IsComplete {
-					wgParent.Done()
-				}
-			}
-			if event.Task.Id == child1.Id || event.Task.Id == child2A.Id || event.Task.Id == child2B.Id || event.Task.Id == child3.Id {
-				if event.Task.IsComplete {
-					wgChildren.Done()
-					childCompletionOrder = append(childCompletionOrder, event.Task.Id)
-				}
-				if len(childCompletionOrder) > 3 {
-					return
-				}
-			}
+func TestChildrenResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/test-worker" {
+			t.Errorf("Expected to request '/test-worker', got: %s", r.URL.Path)
 		}
-	}()
-
-	client := PostReturnsChildrenClient{}
-	client.Output = map[string]interface{}{
-		"children": "How they grow...",
-	}
-	client.Children = []*Task{&child1, &child2A, &child2B, &child3}
-	group.PreloadTasks([]*Task{&parent}, &client)
-	group.Operate()
-
-	// Wait for task to complete
-	wgParent.Wait()
-	if parent.IsComplete != true {
-		t.Fatalf(`parent.IsComplete = %v, want true`, parent.IsComplete)
-	}
-	if len(parent.Children) != 1 {
-		t.Fatalf(`len(parent.Children) = %v, want 1`, len(parent.Children))
-	}
-
-	// Wait for child to complete
-	wgChildren.Wait()
-	if child1.IsComplete != true {
-		t.Fatalf(`child1.IsComplete = %v, want true`, child1.IsComplete)
-	}
-	if child2A.IsComplete != true {
-		t.Fatalf(`child2A.IsComplete = %v, want true`, child2A.IsComplete)
-	}
-	if child2B.IsComplete != true {
-		t.Fatalf(`child2B.IsComplete = %v, want true`, child2B.IsComplete)
-	}
-	if child3.IsComplete != true {
-		t.Fatalf(`child3.IsComplete = %v, want true`, child3.IsComplete)
-	}
-
-	// Make sure children completed in proper order
-	if childCompletionOrder[0] != "T5C1" {
-		t.Fatalf(`childCompletionOrder[0] = %v, want T5C1`, childCompletionOrder[0])
-	}
-	if !(childCompletionOrder[1] == "T5C2A" || childCompletionOrder[1] == "T5C2B") {
-		t.Fatalf(`childCompletionOrder[1] = %v, want T5C2A or T5C2B`, childCompletionOrder[1])
-	}
-	if !(childCompletionOrder[2] == "T5C2A" || childCompletionOrder[2] == "T5C2B") {
-		t.Fatalf(`childCompletionOrder[2] = %v, want T5C2A or T5C2B`, childCompletionOrder[2])
-	}
-	if childCompletionOrder[3] != "T5C3" {
-		t.Fatalf(`childCompletionOrder[3] = %v, want T5C3`, childCompletionOrder[3])
-	}
-}
-
-func TestBadChildrenOutput(t *testing.T) {
-	parent := Task{
-		Id:                "T6P1",
-		TaskGroupId:       "G6",
-		Name:              "Parent",
-		Worker:            "test",
-		Workgroup:         "",
-		Key:               "T6P1",
-		RemainingAttempts: 2,
-		// Start task as paused
-		IsPaused:   false,
-		IsComplete: false,
-		ParentIds:  []string{},
-	}
-
-	child1 := Task{
-		Id:                "T6C1",
-		TaskGroupId:       "G6",
-		Name:              "Child",
-		Worker:            "test",
-		Workgroup:         "",
-		Key:               "T6C1",
-		RemainingAttempts: 2,
-		// Start task as paused
-		IsPaused:   false,
-		IsComplete: false,
-		ParentIds:  []string{},
-	}
-
-	child2 := Task{
-		Id:                "T6C2",
-		TaskGroupId:       "G6",
-		Name:              "Child",
-		Worker:            "test",
-		Workgroup:         "",
-		Key:               "T6C2",
-		RemainingAttempts: 2,
-		// Start task as paused
-		IsPaused:   false,
-		IsComplete: false,
-		ParentIds:  []string{"CX"},
-	}
-	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage(), nil)
-	group := NewTaskGroup("G6", "Test", taskGroupController)
-
-	if len(group.TaskOperators) != 0 {
-		t.Errorf("len(group.TaskOperators) = %d; want 0", len(group.TaskOperators))
-	}
-
-	var wgParent sync.WaitGroup
-	wgParent.Add(1)
-	go func() {
-		defer wgParent.Done()
-		for event := range group.Controller.TaskUpdates {
-			// fmt.Println("Got an update!", event.Event, event.Task.Id, event.Task.IsComplete)
-			if event.Task.Id == parent.Id {
-				if event.Task.IsComplete || len(event.Task.Errors) > 0 {
-					return
-				}
-			}
+		if r.Header.Get("Accept") != "application/json" {
+			t.Errorf("Expected Accept: application/json header, got: %s", r.Header.Get("Accept"))
 		}
-	}()
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"childrenDelayInSeconds":12,"children":[{"id":"task17","name":"Child1","worker":"testx"},{"id":"T20C2","name":"Child2","worker":"testx"}]}`))
+	}))
+	defer server.Close()
 
-	client := PostReturnsChildrenClient{}
-	client.Output = map[string]interface{}{
-		"children": "How they grow...",
-	}
-	client.Children = []*Task{&child1, &child2}
-	group.PreloadTasks([]*Task{&parent}, &client)
-	group.Operate()
-
-	// Wait for task to complete
-	wgParent.Wait()
-	if parent.IsComplete != false {
-		t.Fatalf(`parent.IsComplete = %v, want false`, parent.IsComplete)
-	}
-	if len(parent.Children) != 0 {
-		t.Fatalf(`len(parent.Children) = %v, want 0`, len(parent.Children))
+	client := NewHttpPostClient()
+	client.UrlForTask = func(task *Task) (url string, err error) {
+		return server.URL + "/test-worker", nil
 	}
 
-	// Workgroup should still only have one task
-	if len(group.TaskOperators) != 1 {
-		t.Fatalf(`len(group.TaskOperators) = %v, want 1`, len(group.TaskOperators))
+	task := NewTask()
+	task.Id = "task16"
+	task.Name = "task16"
+	task.Worker = "worker-a"
+	parents := make([]*Task, 0)
+
+	response, postError := client.Post(task, parents)
+
+	if postError != nil {
+		t.Fatal("Recieved an unexpected response error", postError)
 	}
-
-	// parent should have an error
-	if len(parent.Errors) != 1 {
-		t.Fatalf(`len(parent.Errors) = %v, want 1`, len(parent.Errors))
+	if len(response.Children) != 2 {
+		t.Fatalf(`len(response.Children) = %v, want %v`, len(response.Children), 2)
 	}
-
-	group.Shutdown()
-}
-
-func TestWorkgroupDelayInSecondsOutput(t *testing.T) {
-	parent := Task{
-		Id:                "T14P",
-		TaskGroupId:       "G14",
-		Name:              "Parent",
-		Worker:            "test",
-		Workgroup:         "T14Delay",
-		Key:               "T14P",
-		RemainingAttempts: 2,
-		// Start task as paused
-		IsPaused:   false,
-		IsComplete: false,
-		ParentIds:  []string{},
+	if response.ChildrenDelayInSeconds != 12 {
+		t.Fatalf(`response.ChildrenDelayInSeconds = %v, want %v`, response.ChildrenDelayInSeconds, 12)
 	}
-
-	child := Task{
-		Id:                "T14C",
-		TaskGroupId:       "G14",
-		Name:              "Child",
-		Worker:            "test",
-		Workgroup:         "T14Delay",
-		Key:               "T14C",
-		RemainingAttempts: 2,
-		// Start task as paused
-		IsPaused:   false,
-		IsComplete: false,
-		ParentIds:  []string{},
-		RunAfter:   time.Time{},
-	}
-	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage(), nil)
-	group := NewTaskGroup("G14", "Test", taskGroupController)
-	taskGroupController.AddGroup(group)
-
-	if len(group.TaskOperators) != 0 {
-		t.Errorf("len(group.TaskOperators) = %d; want 0", len(group.TaskOperators))
-	}
-
-	var wgParent sync.WaitGroup
-	wgParent.Add(1)
-	var wgChild sync.WaitGroup
-	wgChild.Add(1)
-
-	parentCompleteTime := time.Time{}
-	goFuncFail := ""
-
-	go func() {
-		for event := range group.Controller.TaskUpdates {
-			if event.Task.Id == parent.Id {
-				if event.Task.IsComplete {
-					parentCompleteTime = time.Now()
-					wgParent.Done()
-				}
-			}
-			if event.Task.Id == child.Id {
-				if !event.Task.RunAfter.IsZero() {
-					// Make sure child has RunAfter in future
-					threshold := parentCompleteTime.Add(3 * time.Second)
-					if !child.RunAfter.After(threshold) {
-						goFuncFail = fmt.Sprintf(`child.RunAfter = %v, should be after %v`, child.RunAfter, threshold)
-					}
-				}
-				if event.Task.IsComplete {
-					if parent.IsComplete != true {
-						goFuncFail = fmt.Sprintf(`parent.IsComplete = %v, want true`, parent.IsComplete)
-					}
-					if len(parent.Children) != 1 {
-						goFuncFail = fmt.Sprintf(`len(parent.Children) = %v, want 1`, len(parent.Children))
-					}
-					wgChild.Done()
-					return
-				}
-
-			}
-		}
-	}()
-
-	client := PostReturnsChildrenClient{}
-	client.Output = map[string]interface{}{
-		"children": "How they grow...",
-	}
-	client.WorkgroupDelayInSeconds = 5
-	client.Children = []*Task{&child}
-	group.PreloadTasks([]*Task{&parent}, &client)
-	group.Operate()
-
-	// Wait for task to complete
-	wgParent.Wait()
-
-	// Wait for child to complete
-	wgChild.Wait()
-	if child.IsComplete != true {
-		t.Fatalf(`child.IsComplete = %v, want true`, child.IsComplete)
-	}
-
-	// It should have taken more than 5 seconds for child to complete
-	now2 := time.Now()
-	nowDiff := now2.Sub(parentCompleteTime).Seconds()
-	if nowDiff < 5 {
-		t.Fatalf(`nowDiff = %v, want 5`, nowDiff)
-	}
-
-	if goFuncFail != "" {
-		t.Fatalf(goFuncFail)
-	}
-}
-
-func TestChildrenDelayInSecondsSecondsOutput(t *testing.T) {
-	parent := Task{
-		Id:                "T15P",
-		TaskGroupId:       "G15",
-		Name:              "Parent",
-		Worker:            "test",
-		Workgroup:         "T15Delay",
-		Key:               "T15P",
-		RemainingAttempts: 2,
-		// Start task as paused
-		IsPaused:   false,
-		IsComplete: false,
-		ParentIds:  []string{},
-	}
-
-	child := Task{
-		Id:                "T15C",
-		TaskGroupId:       "G15",
-		Name:              "Child",
-		Worker:            "test",
-		Workgroup:         "T15Delay",
-		Key:               "T15C",
-		RemainingAttempts: 2,
-		// Start task as paused
-		IsPaused:   false,
-		IsComplete: false,
-		ParentIds:  []string{},
-	}
-	taskGroupController := NewTaskGroupController(NewMemoryTaskStorage(), nil)
-	group := NewTaskGroup("G15", "Test", taskGroupController)
-	taskGroupController.AddGroup(group)
-
-	if len(group.TaskOperators) != 0 {
-		t.Errorf("len(group.TaskOperators) = %d; want 0", len(group.TaskOperators))
-	}
-
-	var wgParent sync.WaitGroup
-	wgParent.Add(1)
-	var wgChildUpdate sync.WaitGroup
-	wgChildUpdate.Add(1)
-	var wgChild sync.WaitGroup
-	wgChild.Add(1)
-	go func() {
-		childUpdated := false
-		childDone := false
-		parentDone := false
-		for event := range group.Controller.TaskUpdates {
-			// fmt.Println("Got an update!", event.Event, event.Task.Id, event.Task.IsComplete)
-			if event.Task.Id == parent.Id {
-				if !parentDone && event.Task.IsComplete {
-					wgParent.Done()
-					parentDone = true
-				}
-			}
-			if event.Task.Id == child.Id {
-				if !childDone && event.Task.IsComplete {
-					wgChild.Done()
-					childDone = true
-				}
-				if !childUpdated && !event.Task.RunAfter.IsZero() {
-					wgChildUpdate.Done()
-					childUpdated = true
-				}
-			}
-			if childUpdated && childDone && parentDone {
-				return
-			}
-		}
-	}()
-
-	client := PostReturnsChildrenClient{}
-	client.Output = map[string]interface{}{
-		"children": "How they grow...",
-	}
-	client.ChildrenDelayInSeconds = 5
-	client.Children = []*Task{&child}
-	group.PreloadTasks([]*Task{&parent}, &client)
-	group.Operate()
-
-	now := time.Now()
-
-	var wgSteps sync.WaitGroup
-	wgSteps.Add(3)
-
-	// Wait for task to complete
-	go func() {
-		wgParent.Wait()
-		if parent.IsComplete != true {
-			t.Fatalf(`parent.IsComplete = %v, want true`, parent.IsComplete)
-		}
-		if len(parent.Children) != 1 {
-			t.Fatalf(`len(parent.Children) = %v, want 1`, len(parent.Children))
-		}
-		wgSteps.Done()
-	}()
-
-	// Wait for child to get updated (runAfter update)
-	go func() {
-		wgChildUpdate.Wait()
-		// Make sure child has RunAfter in future
-		threshold := now.Add(3 * time.Second)
-		if !child.RunAfter.After(threshold) {
-			t.Fatalf(`child.RunAfter = %v, should be after %v`, child.RunAfter, threshold)
-		}
-		wgSteps.Done()
-	}()
-
-	// Wait for child to complete
-	go func() {
-		wgChild.Wait()
-		if child.IsComplete != true {
-			t.Fatalf(`child.IsComplete = %v, want true`, child.IsComplete)
-		}
-		wgSteps.Done()
-	}()
-
-	wgSteps.Wait()
-
-	// It should have taken more than 5 seconds for child to complete
-	now2 := time.Now()
-	nowDiff := now2.Sub(now).Seconds()
-	if nowDiff < 5 {
-		t.Fatalf(`nowDiff = %v, want 5`, nowDiff)
+	if response.Children[0].Id != "task17" {
+		t.Fatalf(`response.Children[0].Id = %v, want %v`, response.Children[0].Id, "task17")
 	}
 }

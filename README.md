@@ -1,6 +1,6 @@
 # Crew-Go
 
-Crew is a task management system. It is designed to be used as a library in your own Go project, or as a standalone service. Crew workers are simply webooks so they can be written in any language.
+Crew is a task management system. It is designed to be used as a library in your own Go project or as a standalone service. Crew workers are simply webooks so they can be written in any language.
 
 Crew supports the following features:
 - Complex parent / child task structure (directed acyclic graph)
@@ -16,17 +16,17 @@ Crew supports the following features:
 To run the service
 
 ```
+cd crew-go-ui
+yarn
+yarn build
+
+cd ..
 go get
+cp main.go.example main.go
 go run main.go
 ```
 
-Note, to run service while serving UI from local filesystem, use:
-
-```
-go run main.go live
-```
-
-To run the UI (built with [quasar](https://quasar.dev/)))
+To run the UI in development mode (built with [quasar](https://quasar.dev/)))
 
 ```
 cd crew-go-ui
@@ -41,13 +41,21 @@ cd crew
 go test
 ```
 
+OR
+
+```
+go test -cover
+```
+
 ## Running demo tasks
+
+Crew includes three demo workers (worker-a, worker-b, and worker-c) that you can use to see how everything works.
 
 [![Demo](https://cdn.loom.com/sessions/thumbnails/853e0cf55e514df99a8dc6eeddcc3c00-with-play.gif)](https://www.loom.com/share/853e0cf55e514df99a8dc6eeddcc3c00)
 
 ## Persistence
 
-Crew currently uses the local filesystem to store tasks. Redis and other databases are on the roadmap.
+Crew can store tasks in memory or Redis.  No persistence is available for in-memory storage.
 
 ## Customizing
 
@@ -59,14 +67,6 @@ CREW_WORKER_BASE_URL: Base url for workers (defaults to http://localhost:8080). 
 CREW_WORKER_AUTHORIZATION_HEADER: Auth header that crew will send with requests to workers.
 
 Note, when embedding crew in your own Go project you can supply a login function and an authentication middleware to override the default authentication behavior. See main.go for examples.
-
-## Scaling
-
-Crew is designed so that you can scale horizontally by partitioning on taskGroupId.
-1) Every API call starts with /task_group/<taskGroupId>
-2) You can supply your own task and task group ids
-
-TODO - Caddyfile example of reverse proxy to two different crew instances, one handling taskGroups with Ids that start with A-M and another N-Z.
 
 ### About Tree Structure
 
@@ -86,7 +86,7 @@ A continuation occurs when execution of a task results in additional tasks.  Con
 
 ### About Duplication Merge
 
-Crew can automatically complete tasks that are identical.  The primary use case for this feature is when a large volume of nightly tasks fails to complete before the next night's run.  Instead of creating an even larger bottleneck duplicate tasks can be merged instead of repeated.
+Crew can automatically complete tasks that are identical.  The primary use case for this feature is when a large volume of nightly tasks fails to complete before the next night's run.  Instead of creating an even larger bottleneck, duplicate tasks can be merged instead of repeated.
 
 The "key" field is used for duplication merge.  Whenever Crew assigns a task it will find any other tasks that have the same key in the same task group. Whenever Crew is completing a task it will look for any other tasks that have the same key in the same task group.  The matching tasks will receive the same output or error.
 
@@ -227,27 +227,10 @@ taskGroupsOperator, bootstrapError := storage.Bootstrap(true, client, &throttler
 
 ### About Persistence
 
-Crew provides two storage mechanisms out of the box: local filesystem or redis.  You can also implement the very simple TaskStorage interface to use your own storage mechanism.
-
-To use redis
-
-```go
-storage := crew.NewRedisTaskStorage("localhost:6379", "", 0)
-defer storage.Client.Close()
-//...
-taskGroupsOperator, bootstrapError := storage.Bootstrap(true, client, &throttler)
-```
-
-To use filesystem (local JSON files)
-
-```go
-storage := crew.NewJsonFilesystemTaskStorage("./storage")
-//...
-taskGroupsOperator, bootstrapError := storage.Bootstrap(true, client, &throttler)
-```
+Crew provides two storage mechanisms out of the box: in-memory or redis.  You can also implement the TaskStorage interface to use your own storage mechanism. See main.go.example for examples of configuring storage.
 
 #### Dev Todos
 
+TODO : When a task with children is deleted, how do we prevent orphans?
+
 TODO : When a task with children is reset, should all ancestors also be reset?
-TODO : verify that workgroup pause works across all task groups in the node (???)
-TODO : Make sure duplicate merge (via key) works across all task groups in the node (and update readme above)

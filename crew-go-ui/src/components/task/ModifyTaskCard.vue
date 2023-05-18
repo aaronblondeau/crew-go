@@ -56,18 +56,24 @@
           class="q-mt-md"
         />
 
+        {{ !!props.task }}
+
+        <!-- currently not allowing edits after task created -->
         <q-input
           filled
           v-model="workgroup"
+          :disable="!!props.task"
           type="text"
           label="Workgroup"
           class="q-mt-md"
           hint="Workgroups are used to pause similar tasks. For example, when a rate limit occurs, delay all tasks using the same access token."
         />
 
+        <!-- currently not allowing edits after task created -->
         <q-input
           filled
           v-model="key"
+          :disable="!!props.task"
           type="text"
           label="Key"
           class="q-mt-md"
@@ -212,6 +218,7 @@ const runAfterProxy = ref<QPopupProxy | null>(null)
 const dateFormat = 'YYYY-MM-DD[T]HH:mm:ss.SSSZ'
 const isSeed = ref(false)
 const errorDelayInSeconds = ref(30)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const input = ref<any>({})
 const parentIds = ref<Array<string>>([])
 const newParentId = ref('')

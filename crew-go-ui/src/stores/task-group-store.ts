@@ -110,6 +110,7 @@ export const useTaskGroupStore = defineStore('taskGroup', {
       })
       return result.data.completedPercent
     },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async watchTaskGroup (id: string, onEvent: (evt: any) => void) : Promise<() => void> {
       const socket = new WebSocket(`ws://localhost:8090/api/v1/task_group/${id}/stream/${authStore.token}`)
 

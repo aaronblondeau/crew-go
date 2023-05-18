@@ -8,7 +8,36 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"time"
 )
+
+type ChildTask struct {
+	Id                  string      `json:"id"`
+	Name                string      `json:"name"`
+	Worker              string      `json:"worker"`
+	Workgroup           string      `json:"workgroup"`
+	Key                 string      `json:"key"`
+	RemainingAttempts   int         `json:"remainingAttempts"`
+	IsPaused            bool        `json:"isPaused"`
+	RunAfter            time.Time   `json:"runAfter"`
+	ErrorDelayInSeconds int         `json:"errorDelayInSeconds"`
+	Input               interface{} `json:"input"`
+	ParentIds           []string    `json:"parentIds"`
+}
+
+// WorkerResponse defines the schema of output returned from workers.
+type WorkerResponse struct {
+	Output                  interface{}  `json:"output"`
+	Children                []*ChildTask `json:"children"`
+	WorkgroupDelayInSeconds int          `json:"workgroupDelayInSeconds"`
+	ChildrenDelayInSeconds  int          `json:"childrenDelayInSeconds"`
+	Error                   interface{}  `json:"error"`
+}
+
+// TaskClient defines the interface for delivering tasks to workers.
+type TaskClient interface {
+	Post(task *Task, parents []*Task) (response WorkerResponse, err error)
+}
 
 // HttpPostClient delivers tasks to workers via http post.
 type HttpPostClient struct {
@@ -53,23 +82,20 @@ type WorkerPayloadParentResult struct {
 }
 
 // Post delivers a task to a worker.
-func (client *HttpPostClient) Post(task *Task, taskGroup *TaskGroup) (response WorkerResponse, err error) {
+func (client *HttpPostClient) Post(task *Task, parents []*Task) (response WorkerResponse, err error) {
 	// Start preparing the task input by gathering info from parents
 	payloadParents := []WorkerPayloadParentResult{}
 
 	// Get each parent and add result
-	for _, parentId := range task.ParentIds {
+	for _, parent := range parents {
 		// error, output, children
-		parentOp, found := taskGroup.TaskOperators[parentId]
-		if found {
-			parentResult := WorkerPayloadParentResult{
-				TaskId: parentOp.Task.Id,
-				Worker: parentOp.Task.Worker,
-				Input:  parentOp.Task.Input,
-				Output: parentOp.Task.Output,
-			}
-			payloadParents = append(payloadParents, parentResult)
+		parentResult := WorkerPayloadParentResult{
+			TaskId: parent.Id,
+			Worker: parent.Worker,
+			Input:  parent.Input,
+			Output: parent.Output,
 		}
+		payloadParents = append(payloadParents, parentResult)
 	}
 
 	payload := WorkerPayload{
@@ -79,7 +105,10 @@ func (client *HttpPostClient) Post(task *Task, taskGroup *TaskGroup) (response W
 		TaskId:  task.Id,
 	}
 
-	payloadJsonStr, _ := json.Marshal(payload)
+	payloadJsonStr, buildPayloadErr := json.Marshal(payload)
+	if buildPayloadErr != nil {
+		return WorkerResponse{}, buildPayloadErr
+	}
 	payloadBytes := []byte(payloadJsonStr)
 
 	url, urlError := client.UrlForTask(task)
@@ -87,8 +116,13 @@ func (client *HttpPostClient) Post(task *Task, taskGroup *TaskGroup) (response W
 		return WorkerResponse{}, urlError
 	}
 
+	// fmt.Println("~~ Sending task to", url, task.Worker)
+
 	// Build the request
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(payloadBytes))
+	req, reqSetupErr := http.NewRequest("POST", url, bytes.NewBuffer(payloadBytes))
+	if reqSetupErr != nil {
+		return WorkerResponse{}, reqSetupErr
+	}
 	authHeader, ok := os.LookupEnv("CREW_WORKER_AUTHORIZATION_HEADER")
 	if ok {
 		req.Header.Set("Authorization", authHeader)
@@ -114,11 +148,12 @@ func (client *HttpPostClient) Post(task *Task, taskGroup *TaskGroup) (response W
 
 	// Non 200 response => return response body via call error
 	if resp.StatusCode != http.StatusOK {
-		return WorkerResponse{}, errors.New(string(bodyBytes))
+		errorMessage := fmt.Sprintf("Http call to worker returned non 200 status code: %d, body: %v", resp.StatusCode, string(bodyBytes))
+		return WorkerResponse{}, errors.New(errorMessage)
 	}
 
-	// bodyString := string(bodyBytes)
-	// fmt.Println("~~ Worker Response", bodyString)
+	bodyString := string(bodyBytes)
+	fmt.Println("~~ Worker Response", bodyString)
 
 	// Parse the response
 	workerResp := WorkerResponse{}
