@@ -289,6 +289,7 @@ function unwatchGroup () {
 
 async function watchGroup () {
   unwatchGroup()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   cancelWatchGroup = await taskGroupStore.watchTaskGroup(taskGroupId.value, (event: any) => {
     const payload = JSON.parse(event)
     if (payload.type === 'update' && _.has(payload, 'taskGroup')) {

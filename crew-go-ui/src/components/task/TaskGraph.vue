@@ -129,15 +129,15 @@ const tasks: { [id: string]: Task } = reactive({})
 const container = ref<HTMLElement>()
 const selectedTask = ref<Task | null>(null)
 
-function onCreate (task: Task) {
+function onCreate () { // (task: Task) {
   loadTasks()
 }
 
-function onUpdate (task: Task) {
+function onUpdate () { // (task: Task) {
   loadTasks()
 }
 
-function onDelete (taskId: string) {
+function onDelete () { // (taskId: string) {
   loadTasks()
 }
 
@@ -165,11 +165,13 @@ async function resumeTask (task: Task) {
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function onReset (evt: any, task: Task) {
   Object.assign(task, evt)
   throttledRenderGraph()
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function onRetry (evt: any, task: Task) {
   Object.assign(task, evt)
   throttledRenderGraph()

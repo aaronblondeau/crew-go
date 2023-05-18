@@ -56,12 +56,7 @@ func main() {
 		}
 	}()
 
-	controller := &crew.TaskController{
-		Storage:   storage,
-		Feed:      make(chan interface{}, 8),
-		Client:    client,
-		Throttler: throttler,
-	}
+	controller := crew.NewTaskController(storage, client, throttler)
 	startupError := controller.Startup()
 	if startupError != nil {
 		panic(startupError)

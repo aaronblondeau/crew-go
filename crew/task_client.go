@@ -105,7 +105,10 @@ func (client *HttpPostClient) Post(task *Task, parents []*Task) (response Worker
 		TaskId:  task.Id,
 	}
 
-	payloadJsonStr, _ := json.Marshal(payload)
+	payloadJsonStr, buildPayloadErr := json.Marshal(payload)
+	if buildPayloadErr != nil {
+		return WorkerResponse{}, buildPayloadErr
+	}
 	payloadBytes := []byte(payloadJsonStr)
 
 	url, urlError := client.UrlForTask(task)
@@ -113,8 +116,13 @@ func (client *HttpPostClient) Post(task *Task, parents []*Task) (response Worker
 		return WorkerResponse{}, urlError
 	}
 
+	// fmt.Println("~~ Sending task to", url, task.Worker)
+
 	// Build the request
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(payloadBytes))
+	req, reqSetupErr := http.NewRequest("POST", url, bytes.NewBuffer(payloadBytes))
+	if reqSetupErr != nil {
+		return WorkerResponse{}, reqSetupErr
+	}
 	authHeader, ok := os.LookupEnv("CREW_WORKER_AUTHORIZATION_HEADER")
 	if ok {
 		req.Header.Set("Authorization", authHeader)
@@ -140,11 +148,12 @@ func (client *HttpPostClient) Post(task *Task, parents []*Task) (response Worker
 
 	// Non 200 response => return response body via call error
 	if resp.StatusCode != http.StatusOK {
-		return WorkerResponse{}, errors.New(string(bodyBytes))
+		errorMessage := fmt.Sprintf("Http call to worker returned non 200 status code: %d, body: %v", resp.StatusCode, string(bodyBytes))
+		return WorkerResponse{}, errors.New(errorMessage)
 	}
 
-	// bodyString := string(bodyBytes)
-	// fmt.Println("~~ Worker Response", bodyString)
+	bodyString := string(bodyBytes)
+	fmt.Println("~~ Worker Response", bodyString)
 
 	// Parse the response
 	workerResp := WorkerResponse{}

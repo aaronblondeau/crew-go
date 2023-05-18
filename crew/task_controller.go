@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -31,6 +32,18 @@ type TaskController struct {
 	Client    TaskClient
 	Feed      chan interface{}
 	Throttler *Throttler
+	Pending   *sync.WaitGroup
+}
+
+// NewTaskController returns a new TaskController.
+func NewTaskController(storage TaskStorage, client TaskClient, throttler *Throttler) *TaskController {
+	return &TaskController{
+		Storage:   storage,
+		Client:    client,
+		Feed:      make(chan interface{}, 8),
+		Throttler: throttler,
+		Pending:   &sync.WaitGroup{},
+	}
 }
 
 type TaskFeedEvent struct {
@@ -63,7 +76,7 @@ func (controller *TaskController) GetTaskGroups(page int, pageSize int, search s
 
 	// sort all groups slice
 	sort.Slice(groups, func(a, b int) bool {
-		return groups[a].CreatedAt.Before(groups[b].CreatedAt)
+		return groups[b].CreatedAt.Before(groups[a].CreatedAt)
 	})
 
 	if pageSize == 0 {
@@ -95,7 +108,7 @@ func (controller *TaskController) GetTaskGroup(id string) (taskGroup *TaskGroup,
 	return controller.Storage.FindTaskGroup(id)
 }
 
-func (controller *TaskController) GetTasksInGroup(taskGroupId string, page int, pageSize int, search string) (tasks []*Task, total int, err error) {
+func (controller *TaskController) GetTasksInGroup(taskGroupId string, page int, pageSize int, search string, skipCompleted bool) (tasks []*Task, total int, err error) {
 
 	allTasksInGroup, allTasksInGroupError := controller.Storage.AllTasksInGroup(taskGroupId)
 	if allTasksInGroupError != nil {
@@ -112,6 +125,17 @@ func (controller *TaskController) GetTasksInGroup(taskGroupId string, page int, 
 		} else {
 			tasks = append(tasks, task)
 		}
+	}
+
+	if skipCompleted {
+		// Filter out completed tasks
+		filtered := make([]*Task, 0)
+		for _, task := range tasks {
+			if !task.IsComplete {
+				filtered = append(filtered, task)
+			}
+		}
+		tasks = filtered
 	}
 
 	// sort all tasks slice
@@ -291,10 +315,12 @@ func (controller *TaskController) RetryTaskGroup(id string, remainingAttempts in
 	}
 
 	for _, task := range allTasksInGroup {
-		task.RemainingAttempts = remainingAttempts
-		controller.Storage.SaveTask(task, false)
-		controller.EmitTaskFeedEvent("update", task)
-		controller.TriggerTaskEvaluate(task.Id)
+		if !task.IsComplete {
+			task.RemainingAttempts = remainingAttempts
+			controller.Storage.SaveTask(task, false)
+			controller.EmitTaskFeedEvent("update", task)
+			controller.TriggerTaskEvaluate(task.Id)
+		}
 	}
 	return nil
 }
@@ -309,7 +335,10 @@ func (controller *TaskController) PauseOrResumeTaskGroup(id string, isPaused boo
 		task.IsPaused = isPaused
 		controller.Storage.SaveTask(task, false)
 		controller.EmitTaskFeedEvent("update", task)
-		controller.TriggerTaskEvaluate(task.Id)
+		if !isPaused && !task.IsComplete {
+			// Evaluate is only necessary if un-pausing
+			controller.TriggerTaskEvaluate(task.Id)
+		}
 	}
 	return nil
 }
@@ -331,7 +360,7 @@ func (controller *TaskController) RetryTaskById(id string, remainingAttempts int
 	foundTask.RemainingAttempts = remainingAttempts
 	controller.Storage.SaveTask(foundTask, false)
 	controller.EmitTaskFeedEvent("update", foundTask)
-	controller.TriggerTaskEvaluate(task.Id)
+	controller.TriggerTaskEvaluate(foundTask.Id)
 	return task, nil
 }
 
@@ -401,15 +430,10 @@ func (controller *TaskController) UpdateTask(id string, update map[string]interf
 		shouldReEvaluate = true
 	}
 
-	// TODO
-	// shouldStop := false
-	// newIsComplete, hasIsComplete := update["isComplete"].(bool)
-	// if hasIsComplete {
-	// 	task.IsComplete = newIsComplete
-	// 	if task.IsComplete {
-	// 		shouldStop = true
-	// 	}
-	// }
+	newIsComplete, hasIsComplete := update["isComplete"].(bool)
+	if hasIsComplete {
+		task.IsComplete = newIsComplete
+	}
 
 	newRemainingAttempts, hasRemainingAttempts := update["remainingAttempts"]
 	if hasRemainingAttempts {
@@ -461,19 +485,46 @@ func (controller *TaskController) UpdateTask(id string, update map[string]interf
 	// if shouldReIndex {
 
 	// }
-	if shouldReEvaluate {
+	if shouldReEvaluate && !task.IsComplete && !task.IsPaused {
 		controller.TriggerTaskEvaluate(task.Id)
 	}
 	return task, nil
 }
 
 func (controller *TaskController) Startup() (err error) {
-	// TODO
+	// Fire an evaluate for any tasks that are incomplete and unpaused
+
+	go func() {
+		groups, groupsError := controller.Storage.AllTaskGroups()
+		if groupsError == nil {
+			for _, group := range groups {
+				fmt.Println("~~ Bootstrapping tasks for group", group.Id)
+				tasks, tasksError := controller.Storage.AllTasksInGroup(group.Id)
+				if tasksError == nil {
+					for _, task := range tasks {
+						if !task.IsComplete && !task.IsPaused {
+							controller.TriggerTaskEvaluate(task.Id)
+							// Slight pause here to prevent a flood of evaluates
+							time.Sleep(time.Second / 10)
+						}
+					}
+				} else {
+					fmt.Println("~~ Error bootstrapping tasks", tasksError)
+				}
+				// Longer pause between groups to prevent overloading ourselves.
+				time.Sleep(time.Second * 1)
+			}
+		} else {
+			fmt.Println("~~ Error bootstrapping task groups", groupsError)
+		}
+	}()
+
 	return nil
 }
 
 func (controller *TaskController) Shutdown() (err error) {
-	// TODO
+	// Wait till all pending task executions are complete
+	controller.Pending.Wait()
 	return nil
 }
 
@@ -490,22 +541,29 @@ func (controller *TaskController) Execute(taskToExecute *Task) {
 	fmt.Println("~~ Executing task", taskToExecute.Id)
 	parents, _ := controller.Storage.GetTaskParents(taskToExecute.Id)
 
-	lockError := controller.Storage.TryLockTask(taskToExecute.Id)
-	if lockError != nil {
-		// Couldn't lock task, do not execute
-		fmt.Println("~~ Executing task (lock fail)", taskToExecute.Id)
-		return
-	}
-
 	timer := time.NewTimer(1000 * time.Second)
 	timer.Stop()
 
 	go func() {
-		fmt.Println("~~ Executing task (go routine)", taskToExecute.Id)
-		// Unlock task no matter what else happens below!
-		defer controller.Storage.UnlockTask(taskToExecute.Id)
+		controller.Pending.Add(1)
+		defer controller.Pending.Done()
 
+		fmt.Println("~~ Waiting for task start time (go routine)", taskToExecute.Id)
 		<-timer.C
+
+		fmt.Println("~~ Executing task (go routine)", taskToExecute.Id)
+
+		// Lock is as close to worker request send as possible (in case task delay is longer than lock timeout)
+		unlocker, lockError := controller.Storage.TryLockTask(taskToExecute.Id)
+		// Unlock task no matter what else happens below!
+		defer unlocker()
+
+		if lockError != nil {
+			// Couldn't lock task, do not execute
+			fmt.Println("~~ Executing task (lock fail)", taskToExecute.Id)
+			return
+		}
+
 		// Make sure task hasn't been deleted
 		task, err := controller.Storage.FindTask(taskToExecute.Id)
 		if err != nil {
@@ -585,6 +643,9 @@ func (controller *TaskController) Execute(taskToExecute *Task) {
 					child.IsComplete = false
 					child.RunAfter = childTask.RunAfter
 					child.ErrorDelayInSeconds = childTask.ErrorDelayInSeconds
+					if child.ErrorDelayInSeconds == 0 {
+						child.ErrorDelayInSeconds = 60
+					}
 					child.Input = childTask.Input
 					child.ParentIds = childTask.ParentIds
 

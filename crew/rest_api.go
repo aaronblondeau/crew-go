@@ -114,7 +114,12 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, embededFiles e
 			search = c.QueryParam("search")
 		}
 
-		tasks, total, err := controller.GetTasksInGroup(taskGroupId, page, pageSize, search)
+		skipCompleted := false
+		if c.QueryParams().Has("skipCompleted") {
+			skipCompleted, _ = strconv.ParseBool(c.QueryParam("skipCompleted"))
+		}
+
+		tasks, total, err := controller.GetTasksInGroup(taskGroupId, page, pageSize, search, skipCompleted)
 
 		if err != nil {
 			return c.String(http.StatusInternalServerError, err.Error())
@@ -136,6 +141,14 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, embededFiles e
 		})
 	}, authMiddleware)
 	e.GET("/api/v1/task_group/:task_group_id/task/:task_id", func(c echo.Context) error {
+		taskId := c.Param("task_id")
+		task, err := controller.GetTask(taskId)
+		if err != nil {
+			return c.String(http.StatusInternalServerError, err.Error())
+		}
+		return c.JSON(http.StatusOK, task)
+	}, authMiddleware)
+	e.GET("/api/v1/task/:task_id", func(c echo.Context) error {
 		taskId := c.Param("task_id")
 		task, err := controller.GetTask(taskId)
 		if err != nil {

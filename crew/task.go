@@ -41,7 +41,7 @@ func NewTask() *Task {
 		IsComplete:          false,
 		RunAfter:            time.Now(),
 		IsSeed:              false,
-		ErrorDelayInSeconds: 0,
+		ErrorDelayInSeconds: 60,
 		Input:               nil,
 		Output:              nil,
 		Errors:              make([]string, 0),

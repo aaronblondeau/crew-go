@@ -66,14 +66,31 @@ func (storage *RedisTaskStorage) TaskGroupsPrefix() string {
 
 func (storage *RedisTaskStorage) GetExpiration() time.Duration {
 	taskExpiration := time.Duration(0)
-	taskExpirationEnv := os.Getenv("CREW_TASK_EXPIRATION")
-	if taskExpirationEnv != "" {
-		taskExpirationEnvParsed, taskExpirationErr := time.ParseDuration(taskExpirationEnv)
-		if taskExpirationErr == nil {
-			taskExpiration = taskExpirationEnvParsed
+
+	// Disabling this for now, tasks are more cleanly removed from db with the Delete method
+	// taskExpirationEnv := os.Getenv("CREW_TASK_EXPIRATION")
+	// if taskExpirationEnv != "" {
+	// 	taskExpirationEnvParsed, taskExpirationErr := time.ParseDuration(taskExpirationEnv)
+	// 	if taskExpirationErr == nil {
+	// 		taskExpiration = taskExpirationEnvParsed
+	// 	}
+	// }
+
+	return taskExpiration
+}
+
+func (storage *RedisTaskStorage) GetLockExpiration() time.Duration {
+	taskLockExpiration := time.Duration(10 * time.Minute)
+
+	taskLockExpirationEnv := os.Getenv("CREW_TASK_LOCK_EXPIRATION")
+	if taskLockExpirationEnv != "" {
+		taskLockExpirationEnvParsed, taskLockExpirationErr := time.ParseDuration(taskLockExpirationEnv)
+		if taskLockExpirationErr == nil {
+			taskLockExpiration = taskLockExpirationEnvParsed
 		}
 	}
-	return taskExpiration
+
+	return taskLockExpiration
 }
 
 // SaveTask saves a task.
@@ -100,6 +117,8 @@ func (storage *RedisTaskStorage) SaveTask(task *Task, create bool) (err error) {
 	}
 
 	if canWrite {
+		fmt.Println("~~ save task", task.Id, task.IsComplete)
+
 		redisSetErr := storage.Client.Set(context.Background(), key, taskJsonStr, storage.GetExpiration()).Err()
 		if redisSetErr != nil {
 			return redisSetErr
@@ -140,7 +159,7 @@ func (storage *RedisTaskStorage) SaveTask(task *Task, create bool) (err error) {
 		}
 		return nil
 	} else {
-		return errors.New("Cannot overwrite existing task")
+		return errors.New("cannot overwrite existing task")
 	}
 }
 
@@ -163,15 +182,33 @@ func (storage *RedisTaskStorage) FindTask(taskId string) (task *Task, err error)
 	return storage.FindTaskAtPath(key)
 }
 
-func (storage *RedisTaskStorage) TryLockTask(taskId string) (err error) {
-	err = storage.RedSync.NewMutex(storage.TaskMutexKey(taskId)).Lock()
+func (storage *RedisTaskStorage) TryLockTask(taskId string) (unlocker func() error, err error) {
+	// TODO - make lock duration configurable
+	mux := storage.RedSync.NewMutex(storage.TaskMutexKey(taskId), redsync.WithExpiry(storage.GetLockExpiration()))
+	err = mux.Lock()
+	if err != nil {
+		return nil, err
+	}
+
+	unlocker = func() error {
+		state, unlockErr := mux.Unlock()
+		if unlockErr != nil {
+			fmt.Println("~~ Error unlocking task mutex", unlockErr, state)
+		} else {
+			fmt.Println("~~ Success unlocking task mutex", unlockErr, state)
+		}
+		return unlockErr
+	}
 	return
 }
 
-func (storage *RedisTaskStorage) UnlockTask(taskId string) (err error) {
-	_, unlockErr := storage.RedSync.NewMutex(storage.TaskMutexKey(taskId)).Unlock()
-	return unlockErr
-}
+// func (storage *RedisTaskStorage) UnlockTask(taskId string) (err error) {
+// 	state, unlockErr := storage.RedSync.NewMutex(storage.TaskMutexKey(taskId)).Unlock()
+// 	if unlockErr != nil {
+// 		fmt.Println("~~ Error unlocking task mutex", unlockErr, state)
+// 	}
+// 	return unlockErr
+// }
 
 // Delete task deletes a task by task id.
 func (storage *RedisTaskStorage) DeleteTask(taskId string) (err error) {

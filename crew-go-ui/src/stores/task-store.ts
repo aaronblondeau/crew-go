@@ -18,11 +18,14 @@ export interface Task {
   runAfter: string
   isSeed: boolean
   errorDelayInSeconds: number
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   input: any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   output: any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   errors: Array<any>
   createdAt: string
-  parentIds: any // Array<string>
+  parentIds: Array<string>
   busyExecuting: boolean
   pauseWait: boolean
   resumeWait: boolean
@@ -43,6 +46,7 @@ export interface ModifyTask {
   runAfter?: string
   isSeed?: boolean
   errorDelayInSeconds?: number
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   input?: any
   parentIds?: Array<string>
 }
@@ -54,12 +58,13 @@ export interface PaginatedTasks {
 
 export const useTaskStore = defineStore('task', {
   actions: {
-    async getTasks (taskGroupId: string, page = 1, pageSize = 20, search = '') : Promise<PaginatedTasks> {
+    async getTasks (taskGroupId: string, page = 1, pageSize = 20, search = '', skipCompleted = false) : Promise<PaginatedTasks> {
       const result = await api.get(`api/v1/task_group/${taskGroupId}/tasks`, {
         params: {
           page,
           pageSize,
-          search
+          search,
+          skipCompleted
         },
         headers: {
           Authorization: `Bearer ${authStore.token}`

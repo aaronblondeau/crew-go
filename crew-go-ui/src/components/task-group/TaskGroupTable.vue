@@ -38,6 +38,7 @@
               <template v-slot:after>
                 <q-btn round dense flat icon="search" @click="loadTaskGroups" />
                 <q-btn round dense flat icon="clear" @click="clearSearch" />
+                <q-btn round dense flat icon="refresh" @click="loadTaskGroups" />
               </template>
             </q-input>
           </div>

@@ -15,8 +15,8 @@ import (
 type TaskStorage interface {
 	SaveTask(task *Task, create bool) (err error)
 	FindTask(taskId string) (task *Task, err error)
-	TryLockTask(taskId string) (err error)
-	UnlockTask(taskId string) (err error)
+	TryLockTask(taskId string) (unlocker func() error, err error)
+	// UnlockTask(taskId string) (err error)
 	DeleteTask(taskId string) (err error)
 	GetTaskChildren(taskId string) (tasks []*Task, err error)
 	GetTaskParents(taskId string) (tasks []*Task, err error)
@@ -112,28 +112,33 @@ func (storage *MemoryTaskStorage) FindTask(taskId string) (task *Task, err error
 	return task, nil
 }
 
-func (storage *MemoryTaskStorage) TryLockTask(taskId string) (err error) {
+func (storage *MemoryTaskStorage) TryLockTask(taskId string) (unlocker func() error, err error) {
 	storage.taskLocksMutex.RLock()
 	defer storage.taskLocksMutex.RUnlock()
 	lock, found := storage.taskLocks[taskId]
 	if !found {
-		return errors.New("task not found")
+		err = errors.New("task not found")
 	}
 	if !lock.TryAcquire(1) {
-		return errors.New("task is locked")
+		err = errors.New("task is locked")
 	}
-	return nil
+
+	unlocker = func() error {
+		lock.Release(1)
+		return nil
+	}
+	return
 }
 
-func (storage *MemoryTaskStorage) UnlockTask(taskId string) (err error) {
-	storage.taskLocksMutex.RLock()
-	defer storage.taskLocksMutex.RUnlock()
-	lock, found := storage.taskLocks[taskId]
-	if found {
-		lock.Release(1)
-	}
-	return nil
-}
+// func (storage *MemoryTaskStorage) UnlockTask(taskId string) (err error) {
+// 	storage.taskLocksMutex.RLock()
+// 	defer storage.taskLocksMutex.RUnlock()
+// 	lock, found := storage.taskLocks[taskId]
+// 	if found {
+// 		lock.Release(1)
+// 	}
+// 	return nil
+// }
 
 // Delete task deletes a task by task id.
 func (storage *MemoryTaskStorage) DeleteTask(taskId string) (err error) {
