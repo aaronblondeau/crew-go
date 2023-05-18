@@ -3,6 +3,7 @@ package crew
 import "time"
 
 // TaskGroup represents a group of tasks.
+// IMPORTANT! If you change task's fields, also update TaskGroup.ts in crew-go-javascript
 type TaskGroup struct {
 	Id        string    `json:"id"`
 	Name      string    `json:"name"`

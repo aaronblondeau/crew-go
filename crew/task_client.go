@@ -68,7 +68,7 @@ func NewHttpPostClient() *HttpPostClient {
 // WorkerPayload defines the input sent to a worker (post body).
 type WorkerPayload struct {
 	Input   interface{}                 `json:"input"`
-	Worker  interface{}                 `json:"worker"`
+	Worker  string                      `json:"worker"`
 	Parents []WorkerPayloadParentResult `json:"parents"`
 	TaskId  string                      `json:"taskId"`
 }
@@ -152,8 +152,8 @@ func (client *HttpPostClient) Post(task *Task, parents []*Task) (response Worker
 		return WorkerResponse{}, errors.New(errorMessage)
 	}
 
-	bodyString := string(bodyBytes)
-	fmt.Println("~~ Worker Response", bodyString)
+	// bodyString := string(bodyBytes)
+	// fmt.Println("~~ Worker Response", bodyString)
 
 	// Parse the response
 	workerResp := WorkerResponse{}

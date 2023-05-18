@@ -5,6 +5,7 @@ import (
 )
 
 // A Task represents a unit of work that can be completed by a worker.
+// IMPORTANT! If you change task's fields, also update Task.ts in crew-go-javascript
 type Task struct {
 	Id                  string      `json:"id"`
 	TaskGroupId         string      `json:"taskGroupId"`

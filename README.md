@@ -1,5 +1,7 @@
 # Crew-Go
 
+![Crew Logo](CREW_Logo.png)
+
 Crew is a task management system. It is designed to be used as a library in your own Go project or as a standalone service. Crew workers are simply webooks so they can be written in any language.
 
 Crew supports the following features:

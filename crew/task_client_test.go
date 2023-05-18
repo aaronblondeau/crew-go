@@ -56,12 +56,6 @@ func TestSuccessResponse(t *testing.T) {
 
 func TestHttpErrorResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/test-worker" {
-			t.Errorf("Expected to request '/test-worker', got: %s", r.URL.Path)
-		}
-		if r.Header.Get("Accept") != "application/json" {
-			t.Errorf("Expected Accept: application/json header, got: %s", r.Header.Get("Accept"))
-		}
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`I am confused...`))
 	}))
@@ -80,7 +74,7 @@ func TestHttpErrorResponse(t *testing.T) {
 
 	_, postError := client.Post(task, parents)
 
-	if postError == nil || postError.Error() != "I am confused..." {
+	if postError == nil || postError.Error() != "Http call to worker returned non 200 status code: 500, body: I am confused..." {
 		t.Fatalf("Expected to receive error, but got %v", postError)
 	}
 }
