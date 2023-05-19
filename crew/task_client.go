@@ -134,6 +134,9 @@ func (client *HttpPostClient) Post(task *Task, parents []*Task) (response Worker
 
 	// Send the request
 	httpClient := &http.Client{}
+	// Set a very generous timeout (crew docs recommend tasks should complete in 60 seconds)
+	// TODO - set this with an env var?
+	httpClient.Timeout = 300 * time.Second
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return WorkerResponse{}, err

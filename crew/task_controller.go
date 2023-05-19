@@ -544,8 +544,8 @@ func (controller *TaskController) Execute(taskToExecute *Task) {
 	timer := time.NewTimer(1000 * time.Second)
 	timer.Stop()
 
+	controller.Pending.Add(1)
 	go func() {
-		controller.Pending.Add(1)
 		defer controller.Pending.Done()
 
 		fmt.Println("~~ Waiting for task start time (go routine)", taskToExecute.Id)
@@ -555,6 +555,10 @@ func (controller *TaskController) Execute(taskToExecute *Task) {
 
 		// Lock is as close to worker request send as possible (in case task delay is longer than lock timeout)
 		unlocker, lockError := controller.Storage.TryLockTask(taskToExecute.Id)
+		if lockError != nil {
+			// Failed to lock!
+			return
+		}
 		// Unlock task no matter what else happens below!
 		defer unlocker()
 
@@ -583,10 +587,6 @@ func (controller *TaskController) Execute(taskToExecute *Task) {
 		// Double check if task is still executable
 		if canExecute {
 
-			task.BusyExecuting = true
-			controller.Storage.SaveTask(task, false)
-			controller.EmitTaskFeedEvent("update", task)
-
 			// Apply worker throttling if a throttler is defined
 			throttler := controller.Throttler
 			if (throttler != nil) && (task.Worker != "") {
@@ -598,6 +598,10 @@ func (controller *TaskController) Execute(taskToExecute *Task) {
 				// Block until throttler says it is ok to send task request
 				<-query.Resp
 			}
+
+			task.BusyExecuting = true
+			controller.Storage.SaveTask(task, false)
+			controller.EmitTaskFeedEvent("update", task)
 
 			workerResponse, err := controller.Client.Post(task, parents)
 
@@ -682,31 +686,37 @@ func (controller *TaskController) Execute(taskToExecute *Task) {
 			// Apply child delays
 			// Note that child delays are done here instead of above because task may have a mix of pre-populated children and children created from its output.
 			if workerResponse.ChildrenDelayInSeconds > 0 {
-				allChildren, getChildrenError := controller.Storage.GetTaskChildren(task.Id)
-				if getChildrenError != nil {
-					for _, child := range allChildren {
-						child.RunAfter = time.Now().Add(time.Duration(workerResponse.ChildrenDelayInSeconds * int(time.Second)))
-						controller.Storage.SaveTask(child, false)
-						controller.EmitTaskFeedEvent("update", child)
-						// No evaluate sent here, is sent below if parent complete
+				// This can happen in the background
+				go func() {
+					allChildren, getChildrenError := controller.Storage.GetTaskChildren(task.Id)
+					if getChildrenError != nil {
+						for _, child := range allChildren {
+							child.RunAfter = time.Now().Add(time.Duration(workerResponse.ChildrenDelayInSeconds * int(time.Second)))
+							controller.Storage.SaveTask(child, false)
+							controller.EmitTaskFeedEvent("update", child)
+							// No evaluate sent here, is sent below if parent complete
+						}
 					}
-				}
-				// else {
-				// 	// TODO What should we do here? (failed to fetch children)
-				// }
+					// else {
+					// 	// TODO What should we do here? (failed to fetch children)
+					// }
+				}()
 			}
 
 			// TODO - apply workgroup delays
 			if workerResponse.WorkgroupDelayInSeconds > 0 {
-				workgroupTasks, workgroupTasksError := controller.Storage.GetTasksInWorkgroup(task.Workgroup)
-				if workgroupTasksError != nil {
-					for _, workgroupTask := range workgroupTasks {
-						workgroupTask.RunAfter = time.Now().Add(time.Duration(workerResponse.WorkgroupDelayInSeconds * int(time.Second)))
-						controller.Storage.SaveTask(workgroupTask, false)
-						controller.EmitTaskFeedEvent("update", workgroupTask)
-						// No evaluate sent here, is sent below if parent complete
+				// This can happen in the background
+				go func() {
+					workgroupTasks, workgroupTasksError := controller.Storage.GetTasksInWorkgroup(task.Workgroup)
+					if workgroupTasksError != nil {
+						for _, workgroupTask := range workgroupTasks {
+							workgroupTask.RunAfter = time.Now().Add(time.Duration(workerResponse.WorkgroupDelayInSeconds * int(time.Second)))
+							controller.Storage.SaveTask(workgroupTask, false)
+							controller.EmitTaskFeedEvent("update", workgroupTask)
+							// No evaluate sent here, is sent below if parent complete
+						}
 					}
-				}
+				}()
 			}
 
 			controller.Storage.SaveTask(task, false)
@@ -716,34 +726,38 @@ func (controller *TaskController) Execute(taskToExecute *Task) {
 				controller.TriggerTaskEvaluate(task.Id)
 			} else {
 				// Notify children that parent is complete (via an evaluate)
-				allChildren, getChildrenError := controller.Storage.GetTaskChildren(task.Id)
-				if getChildrenError == nil {
-					for _, child := range allChildren {
-						controller.TriggerTaskEvaluate(child.Id)
+				go func() {
+					allChildren, getChildrenError := controller.Storage.GetTaskChildren(task.Id)
+					if getChildrenError == nil {
+						for _, child := range allChildren {
+							controller.TriggerTaskEvaluate(child.Id)
+						}
 					}
-				}
+				}()
 
 				// Apply de-duplication (and notify the children of duplicates!)
 				if task.Key != "" {
-					keyMatches, keyMatchesError := controller.Storage.GetTasksWithKey(task.Key)
-					if (keyMatchesError == nil) && (len(keyMatches) > 1) {
-						for _, keyMatch := range keyMatches {
-							if keyMatch.Id != task.Id {
-								keyMatch.IsComplete = true
-								keyMatch.Output = task.Output
-								controller.Storage.SaveTask(keyMatch, false)
-								controller.EmitTaskFeedEvent("update", keyMatch)
+					go func() {
+						keyMatches, keyMatchesError := controller.Storage.GetTasksWithKey(task.Key)
+						if (keyMatchesError == nil) && (len(keyMatches) > 1) {
+							for _, keyMatch := range keyMatches {
+								if keyMatch.Id != task.Id {
+									keyMatch.IsComplete = true
+									keyMatch.Output = task.Output
+									controller.Storage.SaveTask(keyMatch, false)
+									controller.EmitTaskFeedEvent("update", keyMatch)
 
-								// Notify children that parent is complete (via an evaluate)
-								keyMatchChildren, keyMatchChildrenError := controller.Storage.GetTaskChildren(keyMatch.Id)
-								if keyMatchChildrenError != nil {
-									for _, child := range keyMatchChildren {
-										controller.TriggerTaskEvaluate(child.Id)
+									// Notify children that parent is complete (via an evaluate)
+									keyMatchChildren, keyMatchChildrenError := controller.Storage.GetTaskChildren(keyMatch.Id)
+									if keyMatchChildrenError != nil {
+										for _, child := range keyMatchChildren {
+											controller.TriggerTaskEvaluate(child.Id)
+										}
 									}
 								}
 							}
 						}
-					}
+					}()
 				}
 			}
 		}
