@@ -2,10 +2,13 @@ package crew
 
 import (
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/go-co-op/gocron"
 )
 
 // A ThrottlePushQuery is a request to the throttler to see if there is enough bandwidth for a worker to run.
@@ -28,11 +31,13 @@ type Throttler struct {
 
 // TaskGroup represents a group of tasks.
 type TaskController struct {
-	Storage   TaskStorage
-	Client    TaskClient
-	Feed      chan interface{}
-	Throttler *Throttler
-	Pending   *sync.WaitGroup
+	Storage                 TaskStorage
+	Client                  TaskClient
+	Feed                    chan interface{}
+	Throttler               *Throttler
+	Pending                 *sync.WaitGroup
+	AbandonedCheckScheduler *gocron.Scheduler
+	AbandonedCheckMutex     *sync.Mutex
 }
 
 // NewTaskController returns a new TaskController.
@@ -43,6 +48,8 @@ func NewTaskController(storage TaskStorage, client TaskClient, throttler *Thrott
 		Feed:      make(chan interface{}, 8),
 		Throttler: throttler,
 		Pending:   &sync.WaitGroup{},
+		// AbandonedCheckScheduler is created in startup
+		AbandonedCheckMutex: &sync.Mutex{},
 	}
 }
 
@@ -492,37 +499,59 @@ func (controller *TaskController) UpdateTask(id string, update map[string]interf
 }
 
 func (controller *TaskController) Startup() (err error) {
-	// Fire an evaluate for any tasks that are incomplete and unpaused
+	// Restart tasks on startup and/or check for tasks that may have been abandoned due to crashes (or power outages) during execution.
+	// Note that for this to work for abandonments the storage mechanism must have expirations on task locks.
+	// Only the redis storage mechanism currently supports this.
+	s := gocron.NewScheduler(time.UTC)
+	// TODO - configure interval with an env var?
+	s.Every(15).Minutes().Do(func() {
+		log.Println("Abandoned task scan starting")
 
-	go func() {
-		groups, groupsError := controller.Storage.AllTaskGroups()
-		if groupsError == nil {
-			for _, group := range groups {
-				fmt.Println("~~ Bootstrapping tasks for group", group.Id)
+		// Use a mutex to make sure this doesn't run more than once at a time
+		locked := controller.AbandonedCheckMutex.TryLock()
+		if !locked {
+			log.Println("Previous abandoned task scan still running, bailing out.")
+			return
+		}
+		defer controller.AbandonedCheckMutex.Unlock()
+
+		taskGroups, taskGroupsError := controller.Storage.AllTaskGroups()
+		if taskGroupsError == nil {
+			for _, group := range taskGroups {
 				tasks, tasksError := controller.Storage.AllTasksInGroup(group.Id)
 				if tasksError == nil {
 					for _, task := range tasks {
-						if !task.IsComplete && !task.IsPaused {
+						// Do a couple of quick checks to prevent unecessary evaluates
+						if !task.IsComplete && !task.IsPaused && task.RunAfter.After(time.Now()) && task.RemainingAttempts > 0 {
 							controller.TriggerTaskEvaluate(task.Id)
 							// Slight pause here to prevent a flood of evaluates
 							time.Sleep(time.Second / 10)
 						}
 					}
 				} else {
-					fmt.Println("~~ Error bootstrapping tasks", tasksError)
+					log.Println("Error scanning for abandoned tasks", tasksError)
 				}
-				// Longer pause between groups to prevent overloading ourselves.
+
+				// Pause between groups to prevent overloading ourselves.
 				time.Sleep(time.Second * 1)
 			}
 		} else {
-			fmt.Println("~~ Error bootstrapping task groups", groupsError)
+			log.Println("Error scanning for abandoned tasks (fetch groups)", taskGroupsError)
 		}
-	}()
+
+		log.Println("Abandoned task scan completed")
+	})
+	s.StartAsync()
+	controller.AbandonedCheckScheduler = s
 
 	return nil
 }
 
 func (controller *TaskController) Shutdown() (err error) {
+	if controller.AbandonedCheckScheduler != nil {
+		controller.AbandonedCheckScheduler.Stop()
+	}
+
 	// Wait till all pending task executions are complete
 	controller.Pending.Wait()
 	return nil
@@ -530,7 +559,7 @@ func (controller *TaskController) Shutdown() (err error) {
 
 func (controller *TaskController) Evaluate(task *Task) {
 	parents, _ := controller.Storage.GetTaskParents(task.Id)
-	fmt.Println("~~ Evaluating task", task.Id, len(parents))
+	log.Println("Evaluating task", task.Id, len(parents))
 	canExecute := task.CanExecute(parents)
 	if canExecute {
 		controller.Execute(task)
@@ -538,7 +567,7 @@ func (controller *TaskController) Evaluate(task *Task) {
 }
 
 func (controller *TaskController) Execute(taskToExecute *Task) {
-	fmt.Println("~~ Executing task", taskToExecute.Id)
+	log.Println("Executing task", taskToExecute.Id)
 	parents, _ := controller.Storage.GetTaskParents(taskToExecute.Id)
 
 	timer := time.NewTimer(1000 * time.Second)
@@ -548,10 +577,10 @@ func (controller *TaskController) Execute(taskToExecute *Task) {
 	go func() {
 		defer controller.Pending.Done()
 
-		fmt.Println("~~ Waiting for task start time (go routine)", taskToExecute.Id)
+		log.Println("Waiting for task start time (go routine)", taskToExecute.Id)
 		<-timer.C
 
-		fmt.Println("~~ Executing task (go routine)", taskToExecute.Id)
+		log.Println("Executing task (go routine)", taskToExecute.Id)
 
 		// Lock is as close to worker request send as possible (in case task delay is longer than lock timeout)
 		unlocker, lockError := controller.Storage.TryLockTask(taskToExecute.Id)
@@ -564,7 +593,7 @@ func (controller *TaskController) Execute(taskToExecute *Task) {
 
 		if lockError != nil {
 			// Couldn't lock task, do not execute
-			fmt.Println("~~ Executing task (lock fail)", taskToExecute.Id)
+			log.Println("Executing task (lock fail)", taskToExecute.Id)
 			return
 		}
 
@@ -619,10 +648,10 @@ func (controller *TaskController) Execute(taskToExecute *Task) {
 			task.BusyExecuting = false
 
 			if err != nil {
-				fmt.Println("~~ Got standard error", err)
+				log.Println("Got standard error", task.Id, err)
 				controller.HandleExecuteError(task, fmt.Sprintf("%v", err))
 			} else if workerResponse.Error != nil {
-				fmt.Println("~~ Got worker response error", workerResponse.Error)
+				log.Println("Got worker response error", task.Id, workerResponse.Error)
 				controller.HandleExecuteError(task, fmt.Sprintf("%v", workerResponse.Error))
 			} else {
 				// No error!
@@ -674,7 +703,7 @@ func (controller *TaskController) Execute(taskToExecute *Task) {
 
 					// Because children failed we have to fail the task so that users will know something went wrong.
 					task.IsComplete = false
-					fmt.Println("~~ Got child creation error", errorCreatingChildren)
+					log.Println("Got child creation error", task.Id, errorCreatingChildren)
 					controller.HandleExecuteError(task, fmt.Sprintf("Child create failure : %v", errorCreatingChildren))
 				} else {
 					for _, child := range createdChildren {

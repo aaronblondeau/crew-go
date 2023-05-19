@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"time"
@@ -54,7 +55,7 @@ func NewHttpPostClient() *HttpPostClient {
 				port = "8090"
 			}
 			baseUrl = "http://localhost:" + port + "/demo/"
-			fmt.Println("CREW_WORKER_BASE_URL not set, defaulting to " + baseUrl)
+			log.Println("CREW_WORKER_BASE_URL not set, defaulting to " + baseUrl)
 
 		}
 		return baseUrl + task.Worker, nil

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -117,8 +116,6 @@ func (storage *RedisTaskStorage) SaveTask(task *Task, create bool) (err error) {
 	}
 
 	if canWrite {
-		fmt.Println("~~ save task", task.Id, task.IsComplete)
-
 		redisSetErr := storage.Client.Set(context.Background(), key, taskJsonStr, storage.GetExpiration()).Err()
 		if redisSetErr != nil {
 			return redisSetErr
@@ -191,24 +188,11 @@ func (storage *RedisTaskStorage) TryLockTask(taskId string) (unlocker func() err
 	}
 
 	unlocker = func() error {
-		state, unlockErr := mux.Unlock()
-		if unlockErr != nil {
-			fmt.Println("~~ Error unlocking task mutex", unlockErr, state)
-		} else {
-			fmt.Println("~~ Success unlocking task mutex", unlockErr, state)
-		}
+		_, unlockErr := mux.Unlock()
 		return unlockErr
 	}
 	return
 }
-
-// func (storage *RedisTaskStorage) UnlockTask(taskId string) (err error) {
-// 	state, unlockErr := storage.RedSync.NewMutex(storage.TaskMutexKey(taskId)).Unlock()
-// 	if unlockErr != nil {
-// 		fmt.Println("~~ Error unlocking task mutex", unlockErr, state)
-// 	}
-// 	return unlockErr
-// }
 
 // Delete task deletes a task by task id.
 func (storage *RedisTaskStorage) DeleteTask(taskId string) (err error) {
@@ -289,7 +273,6 @@ func (storage *RedisTaskStorage) FindTaskGroup(taskGroupId string) (taskGroup *T
 
 // All TaskGroups returns all task groups.
 func (storage *RedisTaskStorage) AllTaskGroups() (taskGroups []*TaskGroup, err error) {
-	fmt.Println("~~ AllTaskGroups 1", storage.TaskGroupsPrefix())
 	ctx := context.Background()
 	iter := storage.Client.Scan(ctx, 0, storage.TaskGroupsPrefix()+"*", 0).Iterator()
 	taskGroups = make([]*TaskGroup, 0)

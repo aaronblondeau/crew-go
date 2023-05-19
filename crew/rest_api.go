@@ -23,11 +23,11 @@ import (
 
 func getFileSystem(useOS bool, embededFiles embed.FS) http.FileSystem {
 	if useOS {
-		log.Print("~~ using live mode for static files")
+		log.Print("using live mode for static files")
 		return http.FS(os.DirFS("crew-go-ui/dist/spa"))
 	}
 
-	log.Print("~~ using embed mode for static files")
+	log.Print("using embed mode for static files")
 	fsys, err := fs.Sub(embededFiles, "crew-go-ui/dist/spa")
 	if err != nil {
 		panic(err)
@@ -367,7 +367,7 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, embededFiles e
 
 	// Demo worker endpoints
 	e.POST("/demo/worker-a", func(c echo.Context) error {
-		fmt.Println("~~ Demo worker A has been called!")
+		log.Println("Demo worker A has been called!")
 		time.Sleep(5 * time.Second)
 
 		payload := map[string]interface{}{}
@@ -391,7 +391,7 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, embededFiles e
 	})
 	// Worker B is pretty much identical to worker A
 	e.POST("/demo/worker-b", func(c echo.Context) error {
-		fmt.Println("~~ Demo worker B has been called!")
+		log.Println("Demo worker B has been called!")
 		time.Sleep(7 * time.Second)
 
 		payload := map[string]interface{}{}
@@ -415,7 +415,7 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, embededFiles e
 	})
 	// Worker C returns child (continuation) tasks
 	e.POST("/demo/worker-c", func(c echo.Context) error {
-		fmt.Println("~~ Demo worker C has been called!")
+		log.Println("Demo worker C has been called!")
 		time.Sleep(2 * time.Second)
 
 		payload := map[string]interface{}{}
@@ -510,7 +510,7 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, embededFiles e
 					}
 				}
 			default:
-				fmt.Printf("I don't know how to handle feed message of type %T!\n", v)
+				log.Printf("I don't know how to handle feed message of type %T!\n", v)
 			}
 		}
 	}()
