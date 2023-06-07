@@ -36,12 +36,15 @@ func getFileSystem(useOS bool, embededFiles embed.FS) http.FileSystem {
 	return http.FS(fsys)
 }
 
+//go:embed crew-go-ui/dist/spa
+var embededFiles embed.FS
+
 // ServeRestApi starts the REST API server.
 // wg: A waitgroup that the server can use to signal when it is done.
 // controller: The root task controller to use to manage all tasks and task groups.
 // authMiddleware: The echo middleware function that will be used to authenticate API calls.
 // loginFunc: The function that will be used to handle login requests.
-func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, embededFiles embed.FS, authMiddleware echo.MiddlewareFunc, loginFunc func(c echo.Context) error) *http.Server {
+func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware echo.MiddlewareFunc, loginFunc func(c echo.Context) error) *http.Server {
 	e := echo.New()
 	e.Use(middleware.CORS())
 

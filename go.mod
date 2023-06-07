@@ -1,4 +1,4 @@
-module github.com/crew-go
+module github.com/aaronblondeau/crew-go
 
 go 1.19
 

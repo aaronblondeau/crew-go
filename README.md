@@ -236,3 +236,15 @@ Crew provides two storage mechanisms out of the box: in-memory or redis.  You ca
 TODO : When a task with children is deleted, how do we prevent orphans?
 
 TODO : When a task with children is reset, should all ancestors also be reset?
+
+#### Deploy notes
+
+cd crew/crew-go-ui
+yarn build
+cd ../..
+go mod tidy
+go test ./crew
+git commit -m "todo"
+git push origin main
+git tag v1.0.todo
+git push origin v1.0.todo
