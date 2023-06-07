@@ -242,8 +242,10 @@ TODO : When a task with children is reset, should all ancestors also be reset?
 cd crew/crew-go-ui
 yarn build
 cd ../..
+
 go mod tidy
 go test ./crew
+git add .
 git commit -m "todo"
 git push origin main
 git tag v1.0.todo
