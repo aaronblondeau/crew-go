@@ -112,7 +112,11 @@ export const useTaskGroupStore = defineStore('taskGroup', {
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async watchTaskGroup (id: string, onEvent: (evt: any) => void) : Promise<() => void> {
-      const socket = new WebSocket(`ws://localhost:8090/api/v1/task_group/${id}/stream/${authStore.token}`)
+      let socketHost = window.location.origin
+      socketHost = socketHost.replace('http://', 'ws://')
+      socketHost = socketHost.replace('https://', 'wss://')
+
+      const socket = new WebSocket(`${socketHost}/api/v1/task_group/${id}/stream/${authStore.token}`)
 
       socket.onopen = function () {
         console.log('~~ connected to task group stream')
