@@ -6,6 +6,7 @@ require (
 	github.com/go-co-op/gocron v1.27.1
 	github.com/go-redsync/redsync/v4 v4.8.1
 	github.com/google/uuid v1.3.0
+	github.com/joho/godotenv v1.5.1
 	github.com/labstack/echo/v4 v4.10.2
 	github.com/redis/go-redis/v9 v9.0.4
 	golang.org/x/net v0.7.0

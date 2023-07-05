@@ -44,7 +44,7 @@ var embededFiles embed.FS
 // controller: The root task controller to use to manage all tasks and task groups.
 // authMiddleware: The echo middleware function that will be used to authenticate API calls.
 // loginFunc: The function that will be used to handle login requests.
-func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware echo.MiddlewareFunc, loginFunc func(c echo.Context) error) *http.Server {
+func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware echo.MiddlewareFunc, loginFunc func(c echo.Context) error) (*http.Server, *echo.Echo) {
 	e := echo.New()
 	e.Use(middleware.CORS())
 
@@ -609,7 +609,7 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware
 
 	log.Println("Server started at " + host + ":" + port)
 
-	return srv
+	return srv, e
 }
 
 // TaskGroupWatcher is used to collect events from the task group controller and deliver them to a websocket.

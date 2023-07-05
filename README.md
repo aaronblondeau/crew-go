@@ -15,14 +15,18 @@ Crew supports the following features:
 
 ## Running from source
 
-To run the service
+Compile the UI
 
 ```
+cd crew
 cd crew-go-ui
 yarn
 yarn build
+```
 
-cd ..
+Run the service
+
+```
 go get
 cp main.go.example main.go
 go run main.go
@@ -31,6 +35,7 @@ go run main.go
 To run the UI in development mode (built with [quasar](https://quasar.dev/)))
 
 ```
+cd crew
 cd crew-go-ui
 yarn
 yarn dev

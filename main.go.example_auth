@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/md5"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -16,6 +17,15 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
 )
+
+type LoginCredentials struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type LoginResponse struct {
+	Token string `json:"token"`
+}
 
 func main() {
 	godotenv.Load(".env")
@@ -53,47 +63,74 @@ func main() {
 		}
 	}()
 
-	// Create the task controller (call to startup is further down)
+	// Create the task controller (note call to startup further down)
 	controller := crew.NewTaskController(storage, client, throttler)
 
 	httpServerExitDone := &sync.WaitGroup{}
 	httpServerExitDone.Add(1)
 
+	// Get username from env var
+	authUsername := os.Getenv("CREW_AUTH_USERNAME")
+	if authUsername == "" {
+		authUsername = "admin"
+	}
+	authPassword := os.Getenv("CREW_AUTH_PASSWORD")
+	if authPassword == "" {
+		authPassword = "crew"
+	}
+	authToken := os.Getenv("CREW_AUTH_TOKEN")
+	if authToken == "" {
+		// Generate token from username and password
+		authToken = fmt.Sprintf("%x", md5.Sum([]byte(authUsername+authPassword)))
+	}
+
 	// Validates each api call's Authorization header
 	authMiddleware := func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			// For systems requiring no auth, just return next(c)
-			return next(c)
+			// return next(c)
+
+			// Checking a hardcoded token (returned by loginFunc)
+
+			// Look in token param first (used for websockets)
+			token := c.Param("token")
+
+			if token == "" {
+				// Look in Authorization header (all other requests)
+				token = c.Request().Header.Get("Authorization")
+			}
+			// If token contains Bearer, remove it
+			if len(token) > 7 && token[:7] == "Bearer " {
+				token = token[7:]
+			}
+
+			if token == authToken {
+				return next(c)
+			}
+			return echo.ErrUnauthorized
 		}
 	}
 
-	// Create the rest api server
-	srv, e := crew.ServeRestApi(httpServerExitDone, controller, authMiddleware, nil)
-
-	// Example adding a new worker to the rest api
-	e.POST("/demo/worker-d", func(c echo.Context) error {
-		log.Println("Demo worker D has been called!")
-		time.Sleep(5 * time.Second)
-
-		payload := map[string]interface{}{}
-		json.NewDecoder(c.Request().Body).Decode(&payload)
-		throw := ""
-		if payload["input"] != nil && payload["input"].(map[string]interface{})["throw"] != nil {
-			throw = payload["input"].(map[string]interface{})["throw"].(string)
-		}
-		if throw != "" {
-			return c.JSON(http.StatusInternalServerError, map[string]interface{}{
-				"error": throw,
-			})
+	// Generates an auth token given an username (email) and password
+	loginFunc := func(c echo.Context) error {
+		creds := LoginCredentials{}
+		inflate_err := json.NewDecoder(c.Request().Body).Decode(&creds)
+		if inflate_err != nil {
+			return c.String(http.StatusBadRequest, inflate_err.Error())
 		}
 
-		return c.JSON(http.StatusOK, map[string]interface{}{
-			"output": map[string]interface{}{
-				"message": "Worker D was here!",
-				"at":      time.Now().Format(time.RFC3339),
-			},
-		})
-	})
+		// Verify a hardcoded password (and return a hashed token)
+		if creds.Username == authUsername && creds.Password == authPassword {
+			payload := LoginResponse{
+				Token: authToken,
+			}
+			return c.JSON(http.StatusOK, payload)
+		} else {
+			return c.String(http.StatusUnauthorized, "Invalid Credentials")
+		}
+	}
+
+	srv := crew.ServeRestApi(httpServerExitDone, controller, authMiddleware, loginFunc)
 
 	// Controller startup is performed after rest api is launched
 	// This is in case we switch TaskController.TriggerEvaluate to happen via an http call in scaled environments.
