@@ -130,7 +130,7 @@ func main() {
 		}
 	}
 
-	srv := crew.ServeRestApi(httpServerExitDone, controller, authMiddleware, loginFunc)
+	srv, _ := crew.ServeRestApi(httpServerExitDone, controller, authMiddleware, loginFunc)
 
 	// Controller startup is performed after rest api is launched
 	// This is in case we switch TaskController.TriggerEvaluate to happen via an http call in scaled environments.
