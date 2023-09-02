@@ -581,6 +581,9 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware
 
 	inShutdown := false
 	watchers := make(map[string]TaskGroupWatcher, 0)
+
+	// If you set a prefix for the API like /crew
+	// Make sure to set CREW_WORKER_BASE_URL to the same prefix
 	BuildRestApi(e, "", controller, authMiddleware, loginFunc, &inShutdown, watchers)
 
 	port := os.Getenv("PORT")
