@@ -58,6 +58,11 @@ module.exports = configure(function (/* ctx */) {
         node: 'node16'
       },
 
+      // IMPORTANT FOR Crew Go UI : keep this set to "hash" and note that the
+      // following changes have been made in this config to allow the UI to be
+      // mounted on arbitray paths:
+      // publicPath was set to '.'
+      // extendViteConf was uncommented and added this : viteConf.base = ''
       vueRouterMode: 'hash', // available values: 'hash', 'history'
       // vueRouterBase,
       // vueDevtools,
