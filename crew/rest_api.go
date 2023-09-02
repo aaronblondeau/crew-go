@@ -39,23 +39,17 @@ func getFileSystem(useOS bool, embededFiles embed.FS) http.FileSystem {
 //go:embed crew-go-ui/dist/spa
 var embededFiles embed.FS
 
-// ServeRestApi starts the REST API server.
-// wg: A waitgroup that the server can use to signal when it is done.
-// controller: The root task controller to use to manage all tasks and task groups.
-// authMiddleware: The echo middleware function that will be used to authenticate API calls.
-// loginFunc: The function that will be used to handle login requests.
-func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware echo.MiddlewareFunc, loginFunc func(c echo.Context) error) (*http.Server, *echo.Echo) {
-	e := echo.New()
-	e.Use(middleware.CORS())
-
-	e.GET("/healthz", func(c echo.Context) error {
+func BuildRestApi(e *echo.Echo, prefix string, controller *TaskController, authMiddleware echo.MiddlewareFunc, loginFunc func(c echo.Context) error, inShutdown *bool, watchers map[string]TaskGroupWatcher) {
+	e.GET(prefix+"/healthz", func(c echo.Context) error {
 		return c.String(http.StatusOK, "Healthy!")
 	})
-	e.POST("/login", loginFunc)
-	e.GET("/authcheck", func(c echo.Context) error {
+	if loginFunc != nil {
+		e.POST(prefix+"/login", loginFunc)
+	}
+	e.GET(prefix+"/authcheck", func(c echo.Context) error {
 		return c.String(http.StatusOK, "Authenticated!")
 	}, authMiddleware)
-	e.GET("/api/v1/task_groups", func(c echo.Context) error {
+	e.GET(prefix+"/api/v1/task_groups", func(c echo.Context) error {
 		page := 1
 		if c.QueryParams().Has("page") {
 			qpage, err := strconv.Atoi(c.QueryParam("page"))
@@ -86,7 +80,7 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware
 			"count":      total,
 		})
 	}, authMiddleware)
-	e.GET("/api/v1/task_group/:id", func(c echo.Context) error {
+	e.GET(prefix+"/api/v1/task_group/:id", func(c echo.Context) error {
 		taskGroupId := c.Param("id")
 		group, err := controller.GetTaskGroup(taskGroupId)
 		if err != nil {
@@ -94,7 +88,7 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware
 		}
 		return c.JSON(http.StatusOK, group)
 	}, authMiddleware)
-	e.GET("/api/v1/task_group/:task_group_id/tasks", func(c echo.Context) error {
+	e.GET(prefix+"/api/v1/task_group/:task_group_id/tasks", func(c echo.Context) error {
 		page := 1
 		if c.QueryParams().Has("page") {
 			qpage, err := strconv.Atoi(c.QueryParam("page"))
@@ -133,7 +127,7 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware
 			"count": total,
 		})
 	}, authMiddleware)
-	e.GET("/api/v1/task_group/:task_group_id/progress", func(c echo.Context) error {
+	e.GET(prefix+"/api/v1/task_group/:task_group_id/progress", func(c echo.Context) error {
 		taskGroupId := c.Param("task_group_id")
 		completedPercent, err := controller.GetTaskGroupProgress(taskGroupId)
 		if err != nil {
@@ -143,7 +137,7 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware
 			"completedPercent": completedPercent,
 		})
 	}, authMiddleware)
-	e.GET("/api/v1/task_group/:task_group_id/task/:task_id", func(c echo.Context) error {
+	e.GET(prefix+"/api/v1/task_group/:task_group_id/task/:task_id", func(c echo.Context) error {
 		taskId := c.Param("task_id")
 		task, err := controller.GetTask(taskId)
 		if err != nil {
@@ -151,7 +145,7 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware
 		}
 		return c.JSON(http.StatusOK, task)
 	}, authMiddleware)
-	e.GET("/api/v1/task/:task_id", func(c echo.Context) error {
+	e.GET(prefix+"/api/v1/task/:task_id", func(c echo.Context) error {
 		taskId := c.Param("task_id")
 		task, err := controller.GetTask(taskId)
 		if err != nil {
@@ -159,7 +153,7 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware
 		}
 		return c.JSON(http.StatusOK, task)
 	}, authMiddleware)
-	e.POST("/api/v1/task_groups", func(c echo.Context) error {
+	e.POST(prefix+"/api/v1/task_groups", func(c echo.Context) error {
 		// Create a task group
 		group := NewTaskGroup("", "")
 		inflate_err := json.NewDecoder(c.Request().Body).Decode(&group)
@@ -172,7 +166,7 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware
 		}
 		return c.JSON(http.StatusOK, group)
 	}, authMiddleware)
-	e.POST("/api/v1/task_group/:task_group_id/tasks", func(c echo.Context) error {
+	e.POST(prefix+"/api/v1/task_group/:task_group_id/tasks", func(c echo.Context) error {
 		// Create a task
 		task := NewTask()
 		inflate_err := json.NewDecoder(c.Request().Body).Decode(&task)
@@ -186,7 +180,7 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware
 		}
 		return c.JSON(http.StatusOK, task)
 	}, authMiddleware)
-	e.DELETE("/api/v1/task_group/:task_group_id", func(c echo.Context) error {
+	e.DELETE(prefix+"/api/v1/task_group/:task_group_id", func(c echo.Context) error {
 		// Delete a task group
 		taskGroupId := c.Param("task_group_id")
 		err := controller.DeleteTaskGroup(taskGroupId)
@@ -198,7 +192,7 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware
 			"deleted": true,
 		})
 	}, authMiddleware)
-	e.DELETE("/api/v1/task_group/:task_group_id/task/:task_id", func(c echo.Context) error {
+	e.DELETE(prefix+"/api/v1/task_group/:task_group_id/task/:task_id", func(c echo.Context) error {
 		// Delete a task
 		taskId := c.Param("task_id")
 		err := controller.DeleteTask(taskId)
@@ -210,7 +204,7 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware
 			"deleted": true,
 		})
 	}, authMiddleware)
-	e.POST("/api/v1/task_group/:task_group_id/reset", func(c echo.Context) error {
+	e.POST(prefix+"/api/v1/task_group/:task_group_id/reset", func(c echo.Context) error {
 		// Reset a task group.  If the group has seed tasks, all non-seed tasks are removed.  Then all remaining tasks within the group are reset.
 		taskGroupId := c.Param("task_group_id")
 
@@ -233,7 +227,7 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware
 			"success": true,
 		})
 	}, authMiddleware)
-	e.POST("/api/v1/task_group/:task_group_id/retry", func(c echo.Context) error {
+	e.POST(prefix+"/api/v1/task_group/:task_group_id/retry", func(c echo.Context) error {
 		// Force a retry of all incomplete tasks in a task group by incrementing their remainingAttempts value.
 		taskGroupId := c.Param("task_group_id")
 
@@ -256,7 +250,7 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware
 			"success": true,
 		})
 	}, authMiddleware)
-	e.POST("/api/v1/task_group/:task_group_id/pause", func(c echo.Context) error {
+	e.POST(prefix+"/api/v1/task_group/:task_group_id/pause", func(c echo.Context) error {
 		taskGroupId := c.Param("task_group_id")
 		err := controller.PauseOrResumeTaskGroup(taskGroupId, true)
 		if err != nil {
@@ -266,7 +260,7 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware
 			"success": true,
 		})
 	}, authMiddleware)
-	e.POST("/api/v1/task_group/:task_group_id/resume", func(c echo.Context) error {
+	e.POST(prefix+"/api/v1/task_group/:task_group_id/resume", func(c echo.Context) error {
 		// Resume all tasks in group, fan-in updates?
 		taskGroupId := c.Param("task_group_id")
 		err := controller.PauseOrResumeTaskGroup(taskGroupId, false)
@@ -277,7 +271,7 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware
 			"success": true,
 		})
 	}, authMiddleware)
-	e.POST("/api/v1/task_group/:task_group_id/task/:task_id/reset", func(c echo.Context) error {
+	e.POST(prefix+"/api/v1/task_group/:task_group_id/task/:task_id/reset", func(c echo.Context) error {
 		// Reset a task as if it had never been run.  Reject if BusyExecuting.
 		taskId := c.Param("task_id")
 
@@ -298,7 +292,7 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware
 
 		return c.JSON(http.StatusOK, task)
 	}, authMiddleware)
-	e.POST("/api/v1/task_group/:task_group_id/task/:task_id/retry", func(c echo.Context) error {
+	e.POST(prefix+"/api/v1/task_group/:task_group_id/task/:task_id/retry", func(c echo.Context) error {
 		// Force a retry of a task by updating its remainingAttempts value.
 		taskId := c.Param("task_id")
 
@@ -319,7 +313,7 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware
 
 		return c.JSON(http.StatusOK, task)
 	}, authMiddleware)
-	e.PUT("/api/v1/task_group/:task_group_id", func(c echo.Context) error {
+	e.PUT(prefix+"/api/v1/task_group/:task_group_id", func(c echo.Context) error {
 		// Update a task group
 		taskGroupId := c.Param("task_group_id")
 
@@ -336,7 +330,7 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware
 
 		return c.JSON(http.StatusOK, taskGroup)
 	}, authMiddleware)
-	e.PUT("/api/v1/task_group/:task_group_id/task/:task_id", func(c echo.Context) error {
+	e.PUT(prefix+"/api/v1/task_group/:task_group_id/task/:task_id", func(c echo.Context) error {
 		// Update a task. Do not update and throw error if Task.BusyExecuting!
 		taskId := c.Param("task_id")
 
@@ -369,7 +363,7 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware
 	}, authMiddleware)
 
 	// Demo worker endpoints
-	e.POST("/demo/worker-a", func(c echo.Context) error {
+	e.POST(prefix+"/demo/worker-a", func(c echo.Context) error {
 		log.Println("Demo worker A has been called!")
 		time.Sleep(5 * time.Second)
 
@@ -393,7 +387,7 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware
 		})
 	})
 	// Worker B is pretty much identical to worker A
-	e.POST("/demo/worker-b", func(c echo.Context) error {
+	e.POST(prefix+"/demo/worker-b", func(c echo.Context) error {
 		log.Println("Demo worker B has been called!")
 		time.Sleep(7 * time.Second)
 
@@ -417,7 +411,7 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware
 		})
 	})
 	// Worker C returns child (continuation) tasks
-	e.POST("/demo/worker-c", func(c echo.Context) error {
+	e.POST(prefix+"/demo/worker-c", func(c echo.Context) error {
 		log.Println("Demo worker C has been called!")
 		time.Sleep(2 * time.Second)
 
@@ -479,15 +473,16 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware
 	// https://echo.labstack.com/cookbook/embed-resources/
 	useOS := len(os.Args) > 1 && os.Args[1] == "live"
 	assetHandler := http.FileServer(getFileSystem(useOS, embededFiles))
-	e.GET("/*", echo.WrapHandler(assetHandler))
+	// e.GET(prefix+"/*", echo.WrapHandler(assetHandler))
+
+	// Could not get assetHandler to work with an echo.Group here, had to use echo.Echo with a prefix:
+	e.GET(prefix+"/*", echo.WrapHandler(http.StripPrefix(prefix+"/", assetHandler)))
 
 	// For troublehsooting: http://localhost:8090/static/icons/favicon-128x128.png
 	// e.GET("/static/*", echo.WrapHandler(http.StripPrefix("/static/", assetHandler)))
 
-	inShutdown := false
-
 	// Watch for updates in the task group contoller and deliver them to listening websockets
-	watchers := make(map[string]TaskGroupWatcher, 0)
+
 	go func() {
 		for update := range controller.Feed {
 
@@ -497,7 +492,7 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware
 				for _, watcher := range watchers {
 					if watcher.TaskGroupId == taskUpdate.Task.TaskGroupId {
 						evtJson, jsonErr := json.Marshal(taskUpdate)
-						if jsonErr == nil && !inShutdown {
+						if jsonErr == nil && !*inShutdown {
 							watcher.Channel <- string(evtJson)
 						}
 					}
@@ -507,7 +502,7 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware
 				for _, watcher := range watchers {
 					if watcher.TaskGroupId == taskGroupUpdate.TaskGroup.Id {
 						evtJson, jsonErr := json.Marshal(taskGroupUpdate)
-						if jsonErr == nil && !inShutdown {
+						if jsonErr == nil && !*inShutdown {
 							watcher.Channel <- string(evtJson)
 						}
 					}
@@ -518,7 +513,7 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware
 		}
 	}()
 
-	e.GET("/api/v1/task_group/:task_group_id/stream/:token", func(c echo.Context) error {
+	e.GET(prefix+"/api/v1/task_group/:task_group_id/stream/:token", func(c echo.Context) error {
 		taskGroupId := c.Param("task_group_id")
 
 		// Make sure task group exists
@@ -573,6 +568,20 @@ func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware
 		delete(watchers, requestId)
 		return nil
 	}, authMiddleware)
+}
+
+// ServeRestApi starts the REST API server.
+// wg: A waitgroup that the server can use to signal when it is done.
+// controller: The root task controller to use to manage all tasks and task groups.
+// authMiddleware: The echo middleware function that will be used to authenticate API calls.
+// loginFunc: The function that will be used to handle login requests.
+func ServeRestApi(wg *sync.WaitGroup, controller *TaskController, authMiddleware echo.MiddlewareFunc, loginFunc func(c echo.Context) error) (*http.Server, *echo.Echo) {
+	e := echo.New()
+	e.Use(middleware.CORS())
+
+	inShutdown := false
+	watchers := make(map[string]TaskGroupWatcher, 0)
+	BuildRestApi(e, "", controller, authMiddleware, loginFunc, &inShutdown, watchers)
 
 	port := os.Getenv("PORT")
 	if port == "" {
