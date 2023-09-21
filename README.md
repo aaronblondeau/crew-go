@@ -12,6 +12,7 @@ Crew supports the following features:
 - Can manage rate limit errors by automatically pausing all tasks in same workgroup
 - Automatically merges output of duplicate tasks
 - Workers can be written in any language
+- Can embed in an Echo](https://echo.labstack.com/) app
 
 ## Running from source
 
@@ -235,6 +236,92 @@ taskGroupsOperator, bootstrapError := storage.Bootstrap(true, client, &throttler
 ### About Persistence
 
 Crew provides two storage mechanisms out of the box: in-memory or redis.  You can also implement the TaskStorage interface to use your own storage mechanism. See main.go.example for examples of configuring storage.
+
+### Embedding in an Echo Server
+
+Crew can be added to any application that uses [Echo](https://echo.labstack.com/).
+
+First, get crew:
+
+```
+go get github.com/aaronblondeau/crew-go/crew
+```
+
+Then set some env vars:
+
+```
+CREW_WORKER_BASE_URL=http://localhost:3000/crew/worker/
+CREW_WORKER_AUTHORIZATION_HEADER=doit
+```
+
+Use this code to add crew (work is in progress to boil this down to a more friendly interface).
+
+```go
+e := echo.New()
+
+// ...
+
+// Use redis for crew persistence
+crewRedisAddress := os.Getenv("REDIS_ADDRESS")
+if crewRedisAddress == "" {
+	crewRedisAddress = "localhost:6379"
+}
+crewRedisPassword := os.Getenv("REDIS_PASSWORD")
+storage := crew.NewRedisTaskStorage(crewRedisAddress, crewRedisPassword, 1)
+defer storage.Client.Close()
+
+// Use http post workers
+crewClient := crew.NewHttpPostClient()
+
+// No throttling of workers in this demo
+throttlePush := make(chan crew.ThrottlePushQuery, 8)
+throttlePop := make(chan crew.ThrottlePopQuery, 8)
+crewThrottler := &crew.Throttler{
+	Push: throttlePush,
+	Pop:  throttlePop,
+}
+go func() {
+	for {
+		select {
+		case pushQuery := <-throttlePush:
+			// Default behavior = immediate response => no throttling
+			fmt.Println("~~ Would throttle", pushQuery.Worker, pushQuery.TaskId)
+			pushQuery.Resp <- true
+		case popQuery := <-throttlePop:
+			fmt.Println("~~ Would unthrottle", popQuery.Worker, popQuery.TaskId)
+		}
+	}
+}()
+
+// Create the task controller (call to startup is further down)
+crewController := crew.NewTaskController(storage, crewClient, crewThrottler)
+
+// Validates each crew api call's Authorization header.  TODO - replace this with something that secures the crew routes.
+crewAuthMiddleware := func(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		// For systems requiring no auth, just return next(c)
+		return next(c)
+	}
+}
+
+// Create the crew rest api server (via echo) and mount at /crew
+inShutdown := false
+watchers := make(map[string]crew.TaskGroupWatcher, 0)
+crew.BuildRestApi(e, "/crew", crewController, crewAuthMiddleware, nil, &inShutdown, watchers)
+
+// Add worker routes to crewEcho
+// TODO...
+// e.POST("/crew/worker/worker-a", func(c echo.Context) error {
+//   // TODO, check that CREW_WORKER_AUTHORIZATION_HEADER was sent before doing the work to make sure crew called us and not somebody else.
+// })
+
+// Start the crew controller
+startupError := crewController.Startup()
+if startupError != nil {
+	panic(startupError)
+}
+
+```
 
 #### Dev Todos
 
