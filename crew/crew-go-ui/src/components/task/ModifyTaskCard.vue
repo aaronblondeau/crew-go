@@ -56,8 +56,6 @@
           class="q-mt-md"
         />
 
-        {{ !!props.task }}
-
         <!-- currently not allowing edits after task created -->
         <q-input
           filled
