@@ -1,3 +1,5 @@
+# DEPRECATED - this project is no longer under active development.
+
 # Crew-Go
 
 ![Crew Logo](CREW_Logo.png)
